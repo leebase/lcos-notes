@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.leebase.LcosNotes</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>LCOS Notes</name>
+  <summary>Write and read linked Markdown notes offline</summary>
+  <description>
+    <p>LCOS Notes is a native desktop editor for a folder of Markdown notes. Follow wikilinks, search your vault, browse tags and backlinks, and read formatted notes without leaving the keyboard.</p>
+    <p>Your notes remain ordinary local files. No accounts or network connection are required.</p>
+  </description>
+  <launchable type="desktop-id">com.leebase.LcosNotes.desktop</launchable>
+  <url type="homepage">https://leebase.com/</url>
+  <content_rating type="oars-1.1"/>
+  <releases><release version="0.4.0" date="2026-11-01"><description><p>Work-area sizing, reading navigation and caret preservation improvements.</p></description></release><release version="0.3.0" date="2026-10-31"><description><p>Reading view, resizable backlinks columns and desktop packaging.</p></description></release></releases>
+</component>

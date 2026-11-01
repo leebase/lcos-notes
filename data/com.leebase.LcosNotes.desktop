@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=LCOS Notes
+Comment=Write and read linked Markdown notes offline
+Exec=lcos-notes
+Icon=com.leebase.LcosNotes
+Terminal=false
+Categories=Office;TextEditor;

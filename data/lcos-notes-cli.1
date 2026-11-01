@@ -1,0 +1,60 @@
+.TH LCOS-NOTES-CLI 1 "October 2026" "LCOS Notes 0.4.0" "User Commands"
+.SH NAME
+lcos-notes-cli \- query and modify a local Markdown vault
+.SH SYNOPSIS
+.B lcos-notes-cli COMMAND VAULT
+.RI [ ARGUMENTS ]
+.SH DESCRIPTION
+All successful commands emit one UTF-8 JSON value and a newline.
+VAULT must be a directory; note arguments are vault-relative .md paths.
+.SH COMMANDS
+.TP
+.B notes VAULT
+List notes in path byte order.
+.TP
+.B links VAULT NOTE
+List wikilinks with Unicode line/column positions and resolved paths.
+.TP
+.B resolve VAULT SOURCE INNER
+Resolve a wikilink's inner text from SOURCE.
+.TP
+.B switch VAULT QUERY
+List up to 50 notes ranked by a case-folded subsequence query.
+.TP
+.B create VAULT TARGET
+Create an empty note or return an existing resolved note.
+.TP
+.B tags VAULT
+List tags and per-note counts.
+.TP
+.B tagged VAULT TAG
+List notes containing TAG or its nested tags.
+.TP
+.B find VAULT QUERY
+Find up to 500 non-overlapping case-insensitive matches with path, line,
+Unicode column and line text. Matches stay within one line, excluding its newline
+and final carriage return. Newline queries match nothing. Empty queries are refused.
+.TP
+.B backlinks VAULT NOTE
+List incoming wikilinks from other notes.
+.TP
+.B rename VAULT OLD NEW
+Move a note and repair affected resolved links, preserving other bytes.
+.TP
+.B render VAULT NOTE
+Render CommonMark with text, style spans and wikilinks. Offsets are zero-based
+Unicode code points; ranges exclude their end. Frontmatter is omitted.
+.TP
+.B blocks VAULT NOTE
+List top-level CommonMark blocks as objects with line and offset. The line is
+1-based in the original file, including removed frontmatter. The offset is a
+0-based Unicode code point position in the same text returned by render.
+Invalid UTF-8 notes are refused.
+.SH EXIT STATUS
+0 on success; 2 on refusal, with a single refused: reason line on standard error.
+Unsafe creation targets and invalid note paths are refused. Invalid UTF-8 notes
+are ignored by search, tags and backlinks and refused by render and rename.
+.SH SEE ALSO
+.BR lcos-notes (1)
+.SH AUTHORS
+Copyright 2026 Lee Harrington. Licensed under the Apache License, Version 2.0.
