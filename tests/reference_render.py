@@ -50,6 +50,14 @@ class _R:
         self.source_name = source_name
 
     def display(self, link):
+        if link.get("kind") == "markdown":                  # CONTRACT.md U5
+            if link["text"]:
+                return link["text"]
+            for name in (link["resolved"], link["path"].rsplit("/", 1)[-1]):
+                if name:
+                    name = name.rsplit("/", 1)[-1]
+                    return name[:-3] if name.lower().endswith(".md") else name
+            return self.source_name
         if link["alias"]:
             return link["alias"]
         if link["heading"]:
@@ -188,6 +196,12 @@ def _frontmatter_end(lines):
     return 0
 
 
+def _merge(links, md):
+    """Wikilinks and Markdown note links in document order (they never overlap)."""
+    out = [dict(l, kind="wiki") for l in links] + [dict(m, kind="markdown") for m in md]
+    return sorted(out, key=lambda l: (l["line"], l["col"]))
+
+
 def _parse(text, links):
     """Placeholders in, frontmatter out; returns (cmark document, frontmatter line count)."""
     lines = text.split("\n")
@@ -202,8 +216,9 @@ def _parse(text, links):
     return _lib.cmark_parse_document(data, len(data), 0), removed
 
 
-def blocks(text: str, links: list, source_path: str) -> list:
-    """CONTRACT.md U4: top-level blocks as {"line", "offset"}."""
+def blocks(text: str, links: list, source_path: str, md=()) -> list:
+    """CONTRACT.md U4: top-level blocks as {"line", "offset"}. md: U5 Markdown note links."""
+    links = _merge(links, md)
     doc, removed = _parse(text, links)
     try:
         r = _R(links, source_path.rsplit("/", 1)[-1][:-3])
@@ -218,8 +233,10 @@ def blocks(text: str, links: list, source_path: str) -> list:
         _lib.cmark_node_free(doc)
 
 
-def render(text: str, links: list, source_path: str) -> dict:
-    """links: the U1 `links` output for this text, in document order."""
+def render(text: str, links: list, source_path: str, md=()) -> dict:
+    """links: the U1 `links` output for this text, in document order; md: the U5 Markdown
+    note links ({raw, text, path, line, col, resolved})."""
+    links = _merge(links, md)
     doc, _removed = _parse(text, links)
     try:
         name = source_path.rsplit("/", 1)[-1][:-3]

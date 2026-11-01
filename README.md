@@ -4,20 +4,20 @@ A native, offline Markdown notes app for LCOS and other X11 desktops, compatible
 with Obsidian-style vaults.
 
 Your notes stay ordinary `.md` files in an ordinary folder. LCOS Notes adds
-`[[wikilinks]]`, backlinks, tags, search, a quick switcher, safe renames that
+`[[wikilinks]]`, `[Markdown links](note.md)`, block references, backlinks, tags, search, a quick switcher, safe renames that
 repair links, and a clean reading view. It has a classic menubar, a notes tree and
 the window manager's own title bar. There are no accounts, no network access, no
 telemetry and no AI features.
 
-Version 0.4.0. Apache License 2.0.
+Version 0.5.0. Apache License 2.0.
 
 ## Download and install (LCOS 1.0)
 
-Download `lcos-notes_0.4.0_amd64.deb` from the
+Download `lcos-notes_0.5.0_amd64.deb` from the
 [latest release](https://github.com/leebase/lcos-notes/releases/latest), then:
 
 ```sh
-sudo apt install ./lcos-notes_0.4.0_amd64.deb
+sudo apt install ./lcos-notes_0.5.0_amd64.deb
 ```
 
 LCOS Notes then appears in the applications menu under Office. You can also start it
@@ -36,6 +36,8 @@ there. On other Debian-family systems, build your own package from source (below
 [DOCUMENTATION.md](DOCUMENTATION.md) is the user guide. It covers vaults, links,
 keyboard shortcuts, the reading view, backlinks, search, tags, renaming and the
 command-line tool.
+The CLI `mdlinks` command lists Markdown note links. Name comparisons normalize to
+NFC before Unicode case folding; stored paths and display text keep their bytes.
 
 The keys you will use most:
 
@@ -69,7 +71,7 @@ To install system-wide, use `meson setup build --prefix=/usr`, then
 To build a `.deb` for the machine you are on (no root needed; `dpkg-dev` required):
 
 ```sh
-packaging/build-deb.sh ~/out      # writes ~/out/lcos-notes_0.4.0_<arch>.deb
+packaging/build-deb.sh ~/out      # writes ~/out/lcos-notes_0.5.0_<arch>.deb
 ```
 
 ## Tests

@@ -1,6 +1,6 @@
 # LCOS Notes user guide
 
-This guide covers version 0.4.0. The exact rules behind each feature are in
+This guide covers version 0.5.0. The exact rules behind each feature are in
 [CONTRACT.md](CONTRACT.md).
 
 ## Vaults and notes
@@ -57,7 +57,7 @@ Write a link to another note as `[[Note name]]`:
 | `[[#Plan]]` | a heading in the current note |
 | `![[diagram.png]]` | an embed; it is followed like a link |
 
-Names match case-insensitively. When several notes share a name, the one in the
+Names match case-insensitively after Unicode NFC normalization. When several notes share a name, the one in the
 same folder wins, then the one with the shortest path. Links inside code (fenced
 blocks and `inline code`) are not links.
 
@@ -69,6 +69,33 @@ when it doesn't yet. To follow a link:
 - Following a link to a note that doesn't exist creates it (empty) and opens it,
   creating folders as needed.
 - Links to attachments show `Not a note: <path>` in the statusbar.
+
+Markdown note links also work: `[plan](Projects/Alpha.md#Plan)`,
+`[block](Alpha.md#%5Eid)` and `[same note](#Heading)`. Destinations can use percent
+escapes (UTF-8 bytes); `+` stays literal. Use `<...>` around a destination containing
+spaces, for example `[plan](<My Plan.md>)`. Titles, reference-style links, images,
+URI schemes and `//` destinations are not followable note links.
+
+Markdown paths try the source folder first and then the vault root, trying the
+path as written and then with `.md` appended. A leading `/` uses only the vault
+root. `.` and `..` segments are collapsed; a path cannot escape the vault. If a
+Markdown link is missing, following creates the note at that relative path (or
+the root path when the relative path would leave the vault), using the ordinary
+note-name restrictions. Backlinks and highlighting include both kinds of links.
+
+A heading beginning with `^` is a block reference: `[[Ideas#^item-1]]` jumps to
+the first line ending with ` ^item-1` (or a tab before the marker), ignoring
+trailing spaces/tabs and fenced code. IDs contain ASCII letters, digits and `-`,
+matched case-insensitively. A missing heading or block opens the note at its start.
+
+In reading view Markdown link text is displayed literally. Empty text uses the
+resolved filename without `.md`, then the path's last segment, then the current
+note's name. Rename preserves resolved destinations for both link forms; Markdown
+rewrites keep their text, heading, angle brackets and extension preference, using
+a path relative to the source (or a root path for a formerly root-based link).
+Percent signs and path hashes are escaped; outside angle brackets, spaces and
+parentheses/angle brackets are escaped too. Unresolved links keep their exact bytes.
+Search still compares the original text without NFC normalization.
 
 ## Quick switcher (Ctrl+O)
 
@@ -119,7 +146,7 @@ tags: [project, inbox]
 
 The **Tags** tab lists every tag with the number of notes using it. Expand a tag to
 see its notes (nested tags included) and activate a note to open it. Tags are
-case-insensitive.
+case-insensitive after NFC normalization.
 
 ## Renaming (F2)
 
@@ -142,7 +169,8 @@ value. Errors print `refused: <reason>` and exit with status 2.
 
 ```sh
 lcos-notes-cli notes     VAULT                 # all notes
-lcos-notes-cli links     VAULT NOTE            # links in a note, resolved
+lcos-notes-cli links     VAULT NOTE            # wikilinks in a note, resolved
+lcos-notes-cli mdlinks   VAULT NOTE            # Markdown note links, resolved
 lcos-notes-cli resolve   VAULT NOTE 'Ideas#Plan|text'
 lcos-notes-cli switch    VAULT QUERY           # quick-switcher results
 lcos-notes-cli create    VAULT 'Inbox/Today'
@@ -160,8 +188,7 @@ lcos-notes-cli blocks    VAULT NOTE            # reading-view block positions
 ## Not supported yet
 
 These are not supported yet:
-- Markdown-style links `[text](note.md)` (they display but are not followed);
-- jumping to `^block` references;
+- Markdown links with titles and reference-style note links;
 - tables, task lists and strikethrough in the reading view;
 - showing embedded notes and images;
 - reloading notes changed by other programs;

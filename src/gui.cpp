@@ -87,12 +87,12 @@ class Window : public Gtk::Window {
     }
     void follow_reading(int offset) {
         for(auto& l:rendered.links) if(l.start<=offset&&offset<l.end) {
-            auto parsed=parse(l.raw);if(parsed.empty()) return;auto link=parsed.front();
+            auto parsed=parse_all(l.raw);if(parsed.empty()) return;auto link=parsed.front();
             try {
                 if(l.resolved&&!is_note(*l.resolved)) {message("Not a note: "+*l.resolved);return;}
                 if(!save()) return;
                 auto path=l.resolved;
-                if(!path) {auto created=vault.create(link.target);path=created.first;refresh_tree();}
+                if(!path) {auto created=vault.create(creation_target(document.path,link));path=created.first;refresh_tree();}
                 open_note(*path,link.heading);
             } catch(const std::exception& e) {message(std::string("refused: ")+e.what());}
             return;
@@ -141,7 +141,7 @@ class Window : public Gtk::Window {
         buffer->remove_tag(resolved_tag,buffer->begin(),buffer->end());
         buffer->remove_tag(unresolved_tag,buffer->begin(),buffer->end());
         if(document.path.empty()) return;
-        try {for(auto& l:vault.links(document.path,value())) {
+        try {for(auto& l:vault.all_links(document.path,value())) {
             buffer->apply_tag(l.resolved?resolved_tag:unresolved_tag,buffer->get_iter_at_offset(l.offset),buffer->get_iter_at_offset(l.offset+l.length));
         }} catch(const std::exception& e) {message(e.what());}
     }
@@ -256,12 +256,12 @@ class Window : public Gtk::Window {
     void follow(int offset, bool clicked=false) {
         if(document.path.empty()) return;
         try {
-            for(auto& l:vault.links(document.path,value())) {
+            for(auto& l:vault.all_links(document.path,value())) {
                 if(offset<l.offset || (!clicked && offset==l.offset) || offset>=l.offset+l.length) continue;
                 if(l.resolved && !is_note(*l.resolved)) {message("Not a note: "+*l.resolved);return;}
                 if(!save()) return;
                 auto path=l.resolved;
-                if(!path) {auto created=vault.create(l.target);path=created.first;refresh_tree();}
+                if(!path) {auto created=vault.create(creation_target(document.path,l));path=created.first;refresh_tree();}
                 open_note(*path,l.heading);return;
             }
         } catch(const std::exception& e) {message(std::string("refused: ")+e.what());}
@@ -384,7 +384,7 @@ public:
         menu("_Edit",{{"_Undo",[this]{if(!reading&&buffer->can_undo()) buffer->undo();}},{"_Redo",[this]{if(!reading&&buffer->can_redo()) buffer->redo();}},{"Cu_t",[this]{if(!reading) buffer->cut_clipboard(Gtk::Clipboard::get());}},{"_Copy",[this]{if(reading) reading_buffer->copy_clipboard(Gtk::Clipboard::get());else buffer->copy_clipboard(Gtk::Clipboard::get());}},{"_Paste",[this]{if(!reading) buffer->paste_clipboard(Gtk::Clipboard::get());}}});
         menu("_View",{{"_Reading View (Ctrl+E)",[this]{toggle_reading();}},{"Focus _Editor",[this]{focus_content();}}});
         menu("_Go",{{"Quick _Switcher",[this]{switcher();}},{"Follow _Link",[this]{follow_current();}}});
-        menu("_Help",{{"_About",[this]{Gtk::AboutDialog dialog;dialog.set_transient_for(*this);dialog.set_program_name("LCOS Notes");dialog.set_version("0.4.0");dialog.set_copyright("Copyright 2026 Lee Harrington");dialog.set_license_type(Gtk::LICENSE_CUSTOM);dialog.set_wrap_license(true);dialog.set_license("Licensed under the Apache License, Version 2.0 (the \"License\"); you may not use this program except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.");dialog.set_comments("Offline Markdown notes for LCOS and X11 desktops. Apache-2.0.");dialog.run();}}});
+        menu("_Help",{{"_About",[this]{Gtk::AboutDialog dialog;dialog.set_transient_for(*this);dialog.set_program_name("LCOS Notes");dialog.set_version("0.5.0");dialog.set_copyright("Copyright 2026 Lee Harrington");dialog.set_license_type(Gtk::LICENSE_CUSTOM);dialog.set_wrap_license(true);dialog.set_license("Licensed under the Apache License, Version 2.0 (the \"License\"); you may not use this program except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.");dialog.set_comments("Offline Markdown notes for LCOS and X11 desktops. Apache-2.0.");dialog.run();}}});
         layout.pack_start(menubar,Gtk::PACK_SHRINK);layout.pack_start(panes);layout.pack_end(status,Gtk::PACK_SHRINK);
         tree.set_model(store);tree.append_column("Notes",columns.label);tree.set_headers_visible(false);
         tree_scroll.add(tree);tree_scroll.set_policy(Gtk::POLICY_AUTOMATIC,Gtk::POLICY_AUTOMATIC);

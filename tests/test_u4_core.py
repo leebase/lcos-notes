@@ -4,6 +4,7 @@ import random
 import pytest
 
 from harness import cli, cli_json
+from reference_links import markdown_links
 from reference_render import blocks as reference_blocks
 from test_u3_core import _doc, _vault
 
@@ -49,7 +50,7 @@ def test_blocks_match_reference(tmp_path, seed):
     for name, text in docs.items():
         links = cli_json("links", v, name)
         got = cli_json("blocks", v, name)
-        assert got == reference_blocks(text, links, name), (name, text)
+        assert got == reference_blocks(text, links, name, markdown_links(v, name, text, links)), (name, text)
         rendered = cli_json("render", v, name)["text"]
         assert all(0 <= b["offset"] <= len(rendered) for b in got)
 

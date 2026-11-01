@@ -1,4 +1,4 @@
-.TH LCOS-NOTES-CLI 1 "October 2026" "LCOS Notes 0.4.0" "User Commands"
+.TH LCOS-NOTES-CLI 1 "October 2026" "LCOS Notes 0.5.0" "User Commands"
 .SH NAME
 lcos-notes-cli \- query and modify a local Markdown vault
 .SH SYNOPSIS
@@ -14,6 +14,11 @@ List notes in path byte order.
 .TP
 .B links VAULT NOTE
 List wikilinks with Unicode line/column positions and resolved paths.
+.TP
+.B mdlinks VAULT NOTE
+List local inline Markdown note links as raw, text, path, heading, line, col and
+resolved. Paths are percent-decoded UTF-8; heading is null without a hash.
+Images, titles, reference-style and non-local links are excluded.
 .TP
 .B resolve VAULT SOURCE INNER
 Resolve a wikilink's inner text from SOURCE.
@@ -36,13 +41,13 @@ Unicode column and line text. Matches stay within one line, excluding its newlin
 and final carriage return. Newline queries match nothing. Empty queries are refused.
 .TP
 .B backlinks VAULT NOTE
-List incoming wikilinks from other notes.
+List incoming wikilinks and Markdown note links from other notes.
 .TP
 .B rename VAULT OLD NEW
 Move a note and repair affected resolved links, preserving other bytes.
 .TP
 .B render VAULT NOTE
-Render CommonMark with text, style spans and wikilinks. Offsets are zero-based
+Render CommonMark with text, style spans and followable note links. Offsets are zero-based
 Unicode code points; ranges exclude their end. Frontmatter is omitted.
 .TP
 .B blocks VAULT NOTE
@@ -50,6 +55,14 @@ List top-level CommonMark blocks as objects with line and offset. The line is
 1-based in the original file, including removed frontmatter. The offset is a
 0-based Unicode code point position in the same text returned by render.
 Invalid UTF-8 notes are refused.
+.SH LINK RULES
+Markdown paths resolve relative to the source folder, then the vault root,
+trying each path with and without an appended .md. A leading slash uses only
+the vault root. Dot segments collapse without escaping the vault. Matching uses
+NFC normalization followed by Unicode case folding; exact path bytes win ties.
+Name and tag comparisons also normalize to NFC; search text does not.
+Rename preserves Markdown link text, heading, angle form and extension preference,
+escaping percent and path hashes and, outside angles, spaces and parentheses.
 .SH EXIT STATUS
 0 on success; 2 on refusal, with a single refused: reason line on standard error.
 Unsafe creation targets and invalid note paths are refused. Invalid UTF-8 notes

@@ -12,7 +12,7 @@ import pytest
 from harness import XSession, copy_vault, title, work_dir
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.4.0"                                          # CONTRACT.md U4
+VERSION = "0.5.0"                                          # CONTRACT.md U4, U5
 APP = "com.leebase.LcosNotes"
 INSTALLED = {
     "usr/bin/lcos-notes", "usr/bin/lcos-notes-cli",

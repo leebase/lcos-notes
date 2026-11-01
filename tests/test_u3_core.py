@@ -4,6 +4,7 @@ import random
 import pytest
 
 from harness import cli, cli_json
+from reference_links import markdown_links
 from reference_render import render as reference
 
 SAMPLE = """---
@@ -182,4 +183,5 @@ def test_render_matches_reference(tmp_path, seed):
     v = _vault(tmp_path, {"A.md": "# H\n", "B.md": "", "Sub/C.md": "", **docs})
     for name, text in docs.items():
         links = cli_json("links", v, name)
-        assert cli_json("render", v, name) == reference(text, links, name), (name, text)
+        md = markdown_links(v, name, text, links)                 # U5: Markdown note links
+        assert cli_json("render", v, name) == reference(text, links, name, md), (name, text)

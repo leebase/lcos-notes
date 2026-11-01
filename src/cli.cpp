@@ -13,7 +13,7 @@ static std::string fields(const Link& l) {
 }
 int main(int argc,char** argv) {
     try {
-        if(argc<3) throw std::runtime_error("usage: lcos-notes-cli notes|links|resolve|switch|create|tags|tagged|find|backlinks|rename|render|blocks VAULT [arguments]");
+        if(argc<3) throw std::runtime_error("usage: lcos-notes-cli notes|links|mdlinks|resolve|switch|create|tags|tagged|find|backlinks|rename|render|blocks VAULT [arguments]");
         std::string command=argv[1],out; Vault vault(argv[2]);
         if(command=="notes" && argc==3) out=array(vault.notes());
         else if(command=="blocks" && argc==4) {
@@ -45,6 +45,13 @@ int main(int argc,char** argv) {
             auto result=vault.create(argv[3]); out="{\"path\":"+quote(result.first)+",\"created\":"+(result.second?"true":"false")+"}";
         } else if(command=="resolve" && argc==5) {
             vault.require_note(argv[3]); auto l=parts(argv[4]); l.resolved=vault.resolve(argv[3],l.target); out="{"+fields(l)+"}";
+        } else if(command=="mdlinks" && argc==4) {
+            Document doc;doc.load(vault,argv[3]);out="[";
+            for(auto& l:vault.mdlinks(doc.path,doc.text)) {
+                if(out.size()>1) out+=",";
+                out+="{\"raw\":"+quote(l.raw)+",\"text\":"+quote(l.text)+",\"path\":"+quote(l.target)+",\"heading\":"+json(l.heading)+",\"line\":"+std::to_string(l.line)+",\"col\":"+std::to_string(l.col)+",\"resolved\":"+json(l.resolved)+"}";
+            }
+            out+="]";
         } else if(command=="links" && argc==4) {
             Document doc;doc.load(vault,argv[3]);out="[";bool first=true;
             for(auto& l:vault.links(doc.path,doc.text)) {

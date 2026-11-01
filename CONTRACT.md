@@ -429,10 +429,98 @@ A query containing `\n` therefore matches nothing, and a `\r` in a query can mat
 is set, non-empty, names an existing directory and is outside the source tree; otherwise
 under `/tmp`. All other U3 packaging rules are unchanged.
 
+## U5: Markdown links, block references, NFC names
+
+U5 adds these to U1–U4; everything above stays in force except where a rule below replaces
+it. The project version is `0.5.0` (wherever U4 names `0.4.0` as the project or package
+version, read `0.5.0`; the metainfo keeps its earlier release entries and adds 0.5.0).
+
+### Markdown note links
+
+A Markdown note link is `[TEXT](DEST)` on one line where every character is prose (the
+mask U1/U2 use for wikilinks and tags: outside fenced code blocks and matched inline code
+spans), no character overlaps a wikilink, and:
+
+- the `[` is not preceded by `!` (images are never note links) or by `\`;
+- `TEXT` contains no `[`, `]`, `\r` or newline (it may be empty);
+- `DEST` is either `<` + characters other than `<`, `>`, `\r` and newline + `>`, or a
+  non-empty run of characters other than space, tab, `(`, `)`, `<`, `\r` and newline;
+  nothing else may appear between `(` and `)` (a link title makes it not a note link);
+- `DEST` is local: it does not start with a URI scheme (`[A-Za-z][A-Za-z0-9+.-]*:`) or `//`;
+- `DEST` (without its `<>`) is split at its first `#` into `PATH` and `HEADING`; each is
+  percent-decoded (`%XX` with two hex digits becomes that byte; a `%` not followed by two
+  hex digits stays literal; `+` is not special) and the results must be valid UTF-8, else
+  it is not a note link. `PATH` may be empty only when there is a `#` (a link to a heading
+  in the same note). `HEADING` is trimmed of spaces; a `#` with nothing after it gives an
+  empty heading, which is treated like no heading when following.
+
+Scanning is left to right; a recognized link's characters are not scanned again; after a
+`[` that does not start a link, scanning continues at the next character.
+`mdlinks VAULT NOTE` (CLI) lists them in document order as
+`{"raw", "text", "path", "heading", "line", "col", "resolved"}` (`heading` `null` when there
+is no `#`; `line`/`col` as for wikilinks; `resolved` as below). `links` still lists only
+wikilinks, unchanged.
+
+Resolution of `PATH` from source note S (directory D):
+
+1. Empty `PATH`: S itself.
+2. A leading `/` is removed and the rest is taken from the vault root only (step 4).
+3. Relative: join D and `PATH`, collapse `.`, `..` and empty segments; if that would leave the
+   vault, skip to step 4. Candidates, in order: the joined path; the joined path + `.md`
+   when it does not already end in `.md` (case-insensitive).
+4. From the vault root: `PATH` itself, then `PATH` + `.md` (same condition), with `.`,
+   `..` and empty segments collapsed; a path that would leave the vault has no candidate.
+5. The first candidate that names a vault file (non-hidden, non-symlink regular file; a
+   note or an attachment) wins. Names are compared case-insensitively after NFC (below);
+   among several files matching one candidate, an exact byte match wins, then byte order.
+6. No candidate: unresolved.
+
+Markdown note links behave like wikilinks everywhere else:
+
+- **Following** (Alt+Enter, Ctrl+click, reading-view Enter/click): as U1, with HEADING as
+  the heading; the caret is on a Markdown link by the U1 rule over its `raw`. Following an
+  unresolved one creates the note, by the U1 creation rules, at the step-3 joined path when
+  that stays inside the vault and otherwise at the step-4 path (one trailing `.md`
+  stripped, `.md` appended), and opens it. Attachment links show `Not a note: <path>`.
+- **Highlighting** in the editor: the U2 link colors over the whole `raw`.
+- **Backlinks** (U2) include them, with `raw` being the Markdown source.
+- **Rename** (U2) keeps the invariant for them too. A rewritten Markdown link keeps `TEXT`,
+  its `#HEADING` (re-encoded) and its `<...>` form if it had one; its new `PATH` is the
+  relative path from the source's (new) directory to the file (`../` as needed; with a
+  leading `/` and the vault path instead when the old `PATH` started with `/`), with `.md`
+  kept if the old `PATH` ended in `.md` (case-insensitive) or the file is not a note, and
+  dropped otherwise. `%` is always encoded, and `#` in the path; outside `<...>` also
+  space, `(`, `)`, `<` and `>` (as `%20` etc., upper-case hex). Nothing else is encoded. If the
+  rewritten link would not resolve to the intended file, the rename is refused (U2).
+- **Reading view** (U3 rule 1): each Markdown note link is replaced by a placeholder
+  before parsing, like a wikilink. Display text: `TEXT` as written if non-empty (no
+  Markdown inside it is interpreted), else the file name of the resolved file without
+  `.md`, else `PATH`'s last segment without `.md`, else the source note's name. Images and
+  non-local links still render as U3 `url` spans and are not followable.
+
+### Block references
+
+A link whose heading starts with `^` (`[[N#^id]]`, `[x](N.md#^id)`) is a block reference
+to the id after the `^` (trimmed). Following it places the caret at the start of the first
+line of the target note, outside fenced code blocks, whose text (without a trailing `\r`
+and trailing spaces or tabs) ends with a space or tab followed by `^id`, compared
+case-insensitively, where id is one or more ASCII letters, digits or `-`. If there is no
+such line, the caret goes to the start of the note. In reading view the reading caret then
+follows U4's block rule from that line.
+
+### NFC names
+
+Everywhere names or paths are compared after case folding (resolution, creation's
+"already resolves", quick switcher ranking, rename collision checks, tags), both sides are
+first normalized to NFC (`g_utf8_normalize` with `G_NORMALIZE_NFC`) and then case folded,
+so a note saved by macOS in decomposed form resolves and ranks like its composed name.
+Paths written to disk keep the bytes the user or link gave them. Search (U2/U4) and
+display text are unchanged.
+
 ## Out of scope (tracked in `BACKLOG.md`)
 
-Markdown-style links
-`[x](y.md)`, block-reference jumping, file watching, attachments viewing, settings dialog,
-daily notes, graph view, Unicode NFC normalization, multiple windows. Also out of scope from U3: following Markdown links and images, embedding
+Markdown links with titles, reference-style links, NFC in search (U5 covers inline
+Markdown note links, block references and NFC names), file watching, attachments viewing, settings dialog,
+daily notes, graph view, multiple windows. Also out of scope from U3: following images and non-local links, embedding
 (transcluding) notes, GitHub-flavored Markdown extensions (tables, task lists,
 strikethrough), rendering attachments, repository publishing and signing of packages.

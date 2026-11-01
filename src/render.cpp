@@ -32,7 +32,19 @@ struct Renderer {
             auto& l=found->second;
             if(raw) {r.text+=l.raw;continue;}
             std::string display;
-            if(l.alias&&!l.alias->empty()) display=*l.alias;
+            if(l.markdown) {
+                if(!l.text.empty()) display=l.text;
+                else {
+                    auto path=l.resolved?*l.resolved:l.target;
+                    display=fs::path(path).filename().string();
+                    if(display.empty()) display=source_name;
+                    // Compare the ASCII suffix without slicing through a UTF-8 character.
+                    else if(display.size()>=3&&display[display.size()-3]=='.'&&
+                            (display[display.size()-2]=='m'||display[display.size()-2]=='M')&&
+                            (display.back()=='d'||display.back()=='D')) display.resize(display.size()-3);
+                }
+            }
+            else if(l.alias&&!l.alias->empty()) display=*l.alias;
             else if(l.heading&&!l.heading->empty()) display=(l.target.empty()?"":l.target+" > ")+*l.heading;
             else display=l.target.empty()?source_name:l.target;
             int start=count(r.text);r.text+=display;int end=count(r.text);
@@ -130,7 +142,7 @@ size_t body_start(const std::string& text) {
 Render Vault::render(const std::string& source,const std::string& text) const {
     if(!g_utf8_validate(text.data(),text.size(),nullptr)) throw std::runtime_error("note is not UTF-8 text");
     Renderer renderer;renderer.source_name=fs::path(source).stem().string();
-    auto found=links(source,text);std::string replaced;size_t cursor=0;
+    auto found=all_links(source,text);std::string replaced;size_t cursor=0;
     // Allocate ordinary Unicode private-use characters absent from the input,
     // so literal Unicode in arbitrary documents never becomes an accidental link.
     std::set<gunichar> used;

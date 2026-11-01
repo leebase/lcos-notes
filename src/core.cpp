@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <memory>
 #include <map>
+#include <regex>
 #include <set>
 #include <fstream>
 #include <stdexcept>
@@ -22,7 +23,8 @@ std::string trim(std::string s) {
 }
 std::string fold(const std::string& s) {
     if (!g_utf8_validate(s.data(), s.size(), nullptr)) fail("invalid UTF-8");
-    std::unique_ptr<char, decltype(&g_free)> p(g_utf8_casefold(s.data(), s.size()), g_free);
+    std::unique_ptr<char, decltype(&g_free)> n(g_utf8_normalize(s.data(), s.size(), G_NORMALIZE_NFC), g_free);
+    std::unique_ptr<char, decltype(&g_free)> p(g_utf8_casefold(n.get(), -1), g_free);
     return p.get();
 }
 std::string quote(const std::string& s) {
@@ -120,6 +122,100 @@ std::vector<Link> parse(const std::string& text) {
     }
     return out;
 }
+
+static Maybe percent_decode(const std::string& s) {
+    std::string out;
+    for(size_t i=0;i<s.size();++i) {
+        if(s[i]=='%'&&i+2<s.size()&&g_ascii_isxdigit(s[i+1])&&g_ascii_isxdigit(s[i+2])) {
+            out+=char(g_ascii_xdigit_value(s[i+1])*16+g_ascii_xdigit_value(s[i+2]));i+=2;
+        } else out+=s[i];
+    }
+    // U+0000 is a valid decoded code point, although it cannot name a file.
+    // GLib's length-bounded validator rejects embedded NUL, so validate each run.
+    for(size_t start=0;start<out.size();) {
+        auto end=out.find('\0',start);if(end==std::string::npos) end=out.size();
+        if(!g_utf8_validate(out.data()+start,end-start,nullptr)) return {};
+        start=end+1;
+    }
+    return out;
+}
+std::vector<Link> parse_markdown(const std::string& text) {
+    auto mask=prose(text);
+    for(auto& w:parse(text)) {
+        auto begin=g_utf8_offset_to_pointer(text.data(),w.offset)-text.data();
+        std::fill(mask.begin()+begin,mask.begin()+begin+w.raw.size(),false);
+    }
+    std::vector<Link> out;int line=1,base=0;
+    static const std::regex scheme("^[A-Za-z][A-Za-z0-9+.-]*:");
+    for(size_t start=0;start<text.size();++line) {
+        auto end=text.find('\n',start);if(end==std::string::npos) end=text.size();
+        for(size_t i=start;i<end;) {
+            if(text[i]!='['||(i>start&&(text[i-1]=='!'||text[i-1]=='\\'))) {++i;continue;}
+            size_t j=i+1;while(j<end&&std::strchr("[]\r",text[j])==nullptr) ++j;
+            if(j+1>=end||text[j]!=']'||text[j+1]!='(') {++i;continue;}
+            size_t k=j+2,m=k,finish;bool angle=k<end&&text[k]=='<';std::string dest;
+            if(angle) {
+                m=k+1;while(m<end&&std::strchr("<>\r",text[m])==nullptr) ++m;
+                if(m+1>=end||text[m]!='>'||text[m+1]!=')') {++i;continue;}
+                dest=text.substr(k+1,m-k-1);finish=m+2;
+            } else {
+                while(m<end&&std::strchr(" \t()<\r",text[m])==nullptr) ++m;
+                if(m==k||m>=end||text[m]!=')') {++i;continue;}
+                dest=text.substr(k,m-k);finish=m+1;
+            }
+            if(!std::all_of(mask.begin()+i,mask.begin()+finish,[](bool b){return b;})||
+               std::regex_search(dest,scheme)||dest.compare(0,2,"//")==0) {++i;continue;}
+            auto hash=dest.find('#');auto path=percent_decode(dest.substr(0,hash));Maybe head;
+            if(hash!=std::string::npos) head=percent_decode(dest.substr(hash+1));
+            if(!path||(hash!=std::string::npos&&!head)||(path->empty()&&hash==std::string::npos)) {++i;continue;}
+            Link l;l.markdown=true;l.angle=angle;l.text=text.substr(i+1,j-i-1);l.target=*path;
+            if(head) l.heading=trim(*head);
+            l.raw=text.substr(i,finish-i);l.line=line;l.col=chars(text.substr(start,i-start))+1;
+            l.offset=base+l.col-1;l.length=chars(l.raw);out.push_back(l);i=finish;
+        }
+        base+=chars(text.substr(start,end-start))+(end<text.size()?1:0);start=end+1;
+    }
+    return out;
+}
+std::vector<Link> parse_all(const std::string& text) {
+    auto out=parse(text),md=parse_markdown(text);out.insert(out.end(),md.begin(),md.end());
+    std::sort(out.begin(),out.end(),[](auto& a,auto& b){return a.offset<b.offset;});return out;
+}
+static Maybe collapse(const std::string& path) {
+    std::vector<std::string> parts;
+    for(size_t i=0;i<=path.size();) {
+        auto end=path.find('/',i);if(end==std::string::npos) end=path.size();
+        auto p=path.substr(i,end-i);
+        if(p=="..") {if(parts.empty()) return {};parts.pop_back();}
+        else if(!p.empty()&&p!=".") parts.push_back(p);
+        i=end+1;
+    }
+    std::string out;for(auto& p:parts) {if(!out.empty()) out+='/';out+=p;}return out;
+}
+std::string creation_target(const std::string& source,const Link& l) {
+    if(!l.markdown) return l.target;
+    Maybe path;
+    if(l.target.compare(0,1,"/")!=0) path=collapse(directory(source)+"/"+l.target);
+    if(!path) path=collapse(l.target);
+    if(!path) fail("path leaves vault");
+    return *path;
+}
+static Maybe resolve_markdown(const std::vector<std::string>& files,const std::string& source,const std::string& path) {
+    if(path.empty()) return source;
+    if(path.find('\0')!=std::string::npos) return {};
+    std::vector<std::string> candidates;
+    auto add=[&](Maybe p) {
+        if(!p||p->empty()) return;
+        candidates.push_back(*p);if(strip(*p)==*p) candidates.push_back(*p+".md");
+    };
+    if(path[0]!='/') add(collapse(directory(source)+"/"+path));
+    add(collapse(path));
+    for(auto& candidate:candidates) {
+        if(std::find(files.begin(),files.end(),candidate)!=files.end()) return candidate;
+        auto key=fold(candidate);for(auto& f:files) if(fold(f)==key) return f;
+    }
+    return {};
+}
 Vault::Vault(fs::path path) : root(fs::absolute(path).lexically_normal()) {
     if (!fs::is_directory(root)) fail("vault is not a directory");
     if (root!=root.root_path() && root.filename().empty()) root=root.parent_path();
@@ -174,6 +270,14 @@ Maybe Vault::resolve(const std::string& source, std::string target) const {
 }
 std::vector<Link> Vault::links(const std::string& source, const std::string& text) const {
     auto all=files();auto out=parse(text); for(auto& l:out) l.resolved=resolve_files(all,source,l.target); return out;
+}
+std::vector<Link> Vault::mdlinks(const std::string& source,const std::string& text) const {
+    auto all=files();auto out=parse_markdown(text);for(auto& l:out) l.resolved=resolve_markdown(all,source,l.target);return out;
+}
+std::vector<Link> Vault::all_links(const std::string& source,const std::string& text) const {
+    auto all=files();auto out=parse_all(text);
+    for(auto& l:out) l.resolved=l.markdown?resolve_markdown(all,source,l.target):resolve_files(all,source,l.target);
+    return out;
 }
 std::vector<std::string> Vault::search(const std::string& query) const {
     auto q=fold(query); std::vector<std::string> out;
@@ -307,7 +411,26 @@ void Document::save(const Vault& vault,const std::string& contents) {
     } catch(...) {unlinkat(dir.n,temp.c_str(),0);throw;}
 }
 int heading_offset(const std::string& text,const std::string& heading) {
-    if(heading.empty() || heading[0]=='^') return 0;
+    if(heading.empty()||heading.find('\0')!=std::string::npos) return 0;
+    if(heading[0]=='^') {
+        auto id=trim(heading.substr(1));
+        if(id.empty()||!std::all_of(id.begin(),id.end(),[](unsigned char c){return g_ascii_isalnum(c)||c=='-';})) return 0;
+        char fence=0;size_t fence_len=0;int offset=0;
+        for(size_t start=0;start<text.size();) {
+            auto end=text.find('\n',start);if(end==std::string::npos) end=text.size();
+            auto line=text.substr(start,end-start);if(!line.empty()&&line.back()=='\r') line.pop_back();
+            auto first=line.find_first_not_of(' ');size_t run=0;char c=first==std::string::npos?0:line[first];
+            if(c=='`'||c=='~') while(first+run<line.size()&&line[first+run]==c) ++run;
+            bool hidden=bool(fence);
+            if(fence) {if(c==fence&&run>=fence_len) fence=0;}
+            else if(run>=3) {hidden=true;fence=c;fence_len=run;}
+            auto last=line.find_last_not_of(" \t");line=last==std::string::npos?"":line.substr(0,last+1);
+            auto marker=line.find_last_of(" \t");
+            if(!hidden&&marker!=std::string::npos&&fold(line.substr(marker+1))==fold("^"+id)) return offset;
+            offset+=chars(text.substr(start,end-start))+(end<text.size()?1:0);start=end+1;
+        }
+        return 0;
+    }
     size_t start=0; int offset=0;
     while(start<text.size()) {
         auto end=text.find('\n',start); if(end==std::string::npos) end=text.size();
@@ -450,9 +573,8 @@ std::vector<Match> Vault::find(const std::string& query) const {
 std::vector<Backlink> Vault::backlinks(const std::string& note) const {
     require_note(note);std::vector<Backlink> out;
     if(!utf8_note(*this,note)) return out;
-    auto all=files();
     for(auto& source:notes()) if(source!=note) if(auto text=utf8_note(*this,source)) {
-        for(auto& l:parse(*text)) if(resolve_files(all,source,l.target)==Maybe(note)) {
+        for(auto& l:all_links(source,*text)) if(l.resolved==Maybe(note)) {
             auto byte=g_utf8_offset_to_pointer(text->data(),l.offset)-text->data();
             auto start=text->rfind('\n',byte);start=start==std::string::npos?0:start+1;
             auto end=text->find('\n',byte);if(end==std::string::npos) end=text->size();
@@ -486,11 +608,11 @@ Rename Vault::rename(const std::string& old,std::string target) const {
     std::vector<Change> changes;Rename result{old,dest,{},{}};
     for(auto& path:notes()) if(auto text=utf8_note(*this,path)) {
         auto source=path==old?dest:path;auto rewritten=*text;
-        auto links=parse(*text);
+        auto links=parse_all(*text);
         for(auto it=links.rbegin();it!=links.rend();++it) {
-            auto& l=*it;auto resolved=resolve_files(before,path,l.target);if(!resolved) continue;
+            auto& l=*it;auto resolved=l.markdown?resolve_markdown(before,path,l.target):resolve_files(before,path,l.target);if(!resolved) continue;
             auto intended=*resolved==old?dest:*resolved;
-            if(resolve_files(after,source,l.target)==Maybe(intended)) continue;
+            if((l.markdown?resolve_markdown(after,source,l.target):resolve_files(after,source,l.target))==Maybe(intended)) continue;
             auto full=is_note(intended)?intended.substr(0,intended.size()-3):intended;
             auto name=fs::path(full).filename().string();
             auto canonical=[&](const std::string& t) -> Maybe {
@@ -499,11 +621,38 @@ Rename Vault::rename(const std::string& old,std::string target) const {
                 if(check.size()==1&&check[0].raw==raw&&check[0].heading==l.heading&&check[0].alias==l.alias&&resolve_files(after,source,check[0].target)==Maybe(intended)) return raw;
                 return {};
             };
-            auto raw=canonical(name);if(!raw) raw=canonical(full);
+            Maybe raw;
+            if(l.markdown) {
+                auto newpath=l.target.compare(0,1,"/")==0 ? "/"+intended : fs::path(intended).lexically_relative(directory(source).empty()?fs::path("."):fs::path(directory(source))).generic_string();
+                if(is_note(intended)&&strip(l.target)==l.target) newpath=strip(newpath);
+                auto encode=[&](const std::string& s,bool path) {
+                    std::string out;const char* hex="0123456789ABCDEF";
+                    for(unsigned char c:s) {
+                        if(c=='%'||(path&&c=='#')||(!l.angle&&std::strchr(" ()<>",c)!=nullptr)) {out+='%';out+=hex[c>>4];out+=hex[c&15];}
+                        else out+=c;
+                    }
+                    return out;
+                };
+                auto dest=encode(newpath,true)+(l.heading?"#"+encode(*l.heading,false):"");
+                auto candidate="["+l.text+"]("+(l.angle?"<":"")+dest+(l.angle?">":"")+")";
+                auto check=parse_markdown(candidate);
+                if(check.size()==1&&check[0].raw==candidate&&check[0].text==l.text&&check[0].heading==l.heading&&resolve_markdown(after,source,check[0].target)==Maybe(intended)) raw=candidate;
+            } else {raw=canonical(name);if(!raw) raw=canonical(full);}
             if(!raw) fail("link cannot preserve its destination");
             auto begin=g_utf8_offset_to_pointer(text->data(),l.offset)-text->data();
             rewritten.replace(begin,l.raw.size(),*raw);
             if(path==old) result.rewrites.push_back({l.offset,l.offset+l.length,int(g_utf8_strlen(raw->data(),raw->size()))});
+        }
+        // A new destination containing Markdown punctuation can change the prose
+        // mask around it. Verify the final document before staging any writes.
+        auto final_links=parse_all(rewritten);
+        if(final_links.size()!=links.size()) fail("link cannot preserve its destination in document");
+        for(size_t i=0;i<links.size();++i) {
+            const auto& l=links[i];const auto& next=final_links[i];
+            auto was=l.markdown?resolve_markdown(before,path,l.target):resolve_files(before,path,l.target);
+            auto now=next.markdown?resolve_markdown(after,source,next.target):resolve_files(after,source,next.target);
+            if(l.markdown!=next.markdown || (was ? now!=Maybe(*was==old?dest:*was) : next.raw!=l.raw))
+                fail("link cannot preserve its destination in document");
         }
         if(rewritten!=*text) result.updated.push_back(source);
         if(rewritten!=*text||path==old) changes.push_back({path,source,rewritten,*text,{},{},false});

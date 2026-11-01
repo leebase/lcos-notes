@@ -17,11 +17,15 @@ bool is_note(const std::string& s);
 struct Link {
     std::string raw, target;
     Maybe heading, alias, resolved;
-    bool embed = false;
+    bool embed = false, markdown = false, angle = false;
+    std::string text;
     int line = 1, col = 1, offset = 0, length = 0;
 };
 Link parts(std::string inner);
 std::vector<Link> parse(const std::string& text);
+std::vector<Link> parse_markdown(const std::string& text);
+std::vector<Link> parse_all(const std::string& text);
+std::string creation_target(const std::string& source, const Link& link);
 struct Tag { std::string tag; int count = 0; };
 struct Match { std::string path, text; int line, col; };
 struct Backlink { std::string source, raw, text; int line, col; };
@@ -47,6 +51,8 @@ public:
     void require_note(const std::string& path) const;
     Maybe resolve(const std::string& source, std::string target) const;
     std::vector<Link> links(const std::string& source, const std::string& text) const;
+    std::vector<Link> mdlinks(const std::string& source, const std::string& text) const;
+    std::vector<Link> all_links(const std::string& source, const std::string& text) const;
     std::vector<std::string> search(const std::string& query) const;
     std::vector<Tag> tags() const;
     std::vector<std::string> tagged(std::string tag) const;
