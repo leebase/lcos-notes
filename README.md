@@ -17,8 +17,12 @@ Download `lcos-notes_0.5.0_amd64.deb` from the
 [latest release](https://github.com/leebase/lcos-notes/releases/latest), then:
 
 ```sh
+sudo apt update
 sudo apt install ./lcos-notes_0.5.0_amd64.deb
 ```
+
+Run `sudo apt update` first on a fresh LCOS install: it ships without package lists,
+and `apt` needs them to fetch the one extra library LCOS Notes uses (`libcmark0.30.2`).
 
 LCOS Notes then appears in the applications menu under Office. You can also start it
 from a terminal:
