@@ -9,6 +9,7 @@ import pytest
 from harness import cli, cli_json, tree_digest
 from reference_links import markdown_links
 from reference_render import blocks as ref_blocks, render as ref_render
+from u8_load import LOAD                                    # U8: embeds read the vault
 from test_u2_core import make
 from test_u3_core import _doc
 
@@ -276,5 +277,5 @@ def test_render_and_blocks_with_markdown_links_match_reference(tmp_path, seed):
     v = make(tmp_path / "v", {**MD_VAULT, **docs, "Sub/C.md": "", "B.md": ""})
     for name, text in docs.items():
         links, md = cli_json("links", v, name), _ref(v, name, text)
-        assert cli_json("render", v, name) == ref_render(text, links, name, md), (name, text)
-        assert cli_json("blocks", v, name) == ref_blocks(text, links, name, md), (name, text)
+        assert cli_json("render", v, name) == ref_render(text, links, name, md, LOAD(v)), (name, text)
+        assert cli_json("blocks", v, name) == ref_blocks(text, links, name, md, LOAD(v)), (name, text)

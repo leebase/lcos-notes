@@ -46,14 +46,15 @@ struct Rename {
     int map_caret(int offset) const;
 };
 struct Span { int start, end; std::string style; };
-struct RenderLink { int start, end; std::string raw; Maybe resolved; };
+struct RenderLink { int start, end; std::string raw; Maybe resolved; std::string source; };
+struct RenderImage { int offset; std::string path; };
 struct Block { int line, offset; };
 struct Task {
     int line, col; bool checked; int offset;
     // Byte offset of the character after '[' in the original, unmodified source.
     size_t source_offset = 0;
 };
-struct Render { std::string text; std::vector<Span> spans; std::vector<RenderLink> links; std::vector<Block> blocks; std::vector<Task> tasks; };
+struct Render { std::string text; std::vector<Span> spans; std::vector<Span> layout_spans; std::vector<RenderLink> links; std::vector<RenderImage> images; std::vector<Block> blocks; std::vector<Task> tasks; };
 class Vault {
 public:
     fs::path root;
@@ -71,7 +72,7 @@ public:
     std::vector<std::string> tagged(std::string tag) const;
     std::vector<Match> find(const std::string& query, bool regex=false, bool word=false) const;
     std::vector<Backlink> backlinks(const std::string& note) const;
-    Render render(const std::string& source, const std::string& text) const;
+    Render render(const std::string& source, const std::string& text, const std::string& selection = "") const;
     Rename retag(std::string old, std::string target) const;
     std::vector<Backlink> mentions(const std::string& note) const;
     Rename rename(const std::string& old, std::string target) const;

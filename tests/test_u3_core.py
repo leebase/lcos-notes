@@ -6,6 +6,7 @@ import pytest
 from harness import cli, cli_json
 from reference_links import markdown_links
 from reference_render import render as reference
+from u8_load import LOAD                                    # U8: embeds read the vault
 
 SAMPLE = """---
 tags: [x]
@@ -111,7 +112,7 @@ def test_crlf_frontmatter_and_empty(tmp_path):
     r = cli_json("render", v, "C.md")
     assert r["text"] == "H A\n\nx y"
     assert r["links"] == [{"start": 2, "end": 3, "raw": "[[A]]", "resolved": "A.md"}]
-    assert cli_json("render", v, "E.md") == {"text": "", "spans": [], "links": []}
+    assert cli_json("render", v, "E.md") == {"text": "", "spans": [], "links": [], "images": []}   # images: U8
     # No closing line: no frontmatter, so the first line is a thematic break.
     assert cli_json("render", v, "F.md")["text"] == "─" * 20 + "\n\nonly"
 
@@ -184,4 +185,4 @@ def test_render_matches_reference(tmp_path, seed):
     for name, text in docs.items():
         links = cli_json("links", v, name)
         md = markdown_links(v, name, text, links)                 # U5: Markdown note links
-        assert cli_json("render", v, name) == reference(text, links, name, md), (name, text)
+        assert cli_json("render", v, name) == reference(text, links, name, md, LOAD(v)), (name, text)

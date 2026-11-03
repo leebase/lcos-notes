@@ -6,7 +6,9 @@
 #include <glib.h>
 #include <algorithm>
 #include <map>
+#include <functional>
 #include <memory>
+#include <regex>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -17,12 +19,17 @@ int count(const std::string& s) { return g_utf8_strlen(s.data(), s.size()); }
 std::string utf8(gunichar c) { char b[6]; auto n=g_unichar_to_utf8(c,b);return std::string(b,n); }
 void append(Render& out, Render part) {
     int offset=count(out.text);out.text+=part.text;
+    for(auto image:part.images) {image.offset+=offset;out.images.push_back(image);}
     for(auto t:part.tasks) {t.offset+=offset;out.tasks.push_back(t);}
     for(auto b:part.blocks) {b.offset+=offset;out.blocks.push_back(b);}
     for(auto s:part.spans) {s.start+=offset;s.end+=offset;out.spans.push_back(s);}
+    for(auto s:part.layout_spans) {s.start+=offset;s.end+=offset;out.layout_spans.push_back(s);}
     for(auto l:part.links) {l.start+=offset;l.end+=offset;out.links.push_back(l);}
 }
-void style(Render& r,const std::string& name) {r.spans.push_back({0,count(r.text),name});}
+void style(Render& r,const std::string& name) {
+    Span span{0,count(r.text),name};r.spans.push_back(span);
+    if(name=="embed"||name=="quote") r.layout_spans.push_back(span);
+}
 std::string literal(cmark_node* n) {auto s=cmark_node_get_literal(n);return s?s:"";}
 // cmark recognizes LF, CRLF and lone CR, but not Unicode paragraph separators.
 std::vector<size_t> line_starts(const std::string& text) {
@@ -35,9 +42,11 @@ std::vector<size_t> line_starts(const std::string& text) {
     }
     return starts;
 }
+thread_local std::vector<std::string> embed_stack;
 struct Renderer {
+    const Vault* vault=nullptr;
     std::map<gunichar,Link> tokens;
-    std::string source_name;
+    std::string source_name, source_path;
     std::string source, parsed;
     std::vector<size_t> source_lines, parsed_lines, source_offsets;
     int removed=0, parser_removed=0;
@@ -78,13 +87,38 @@ struct Renderer {
             else display=l.target.empty()?source_name:l.target;
             int start=count(r.text);r.text+=display;int end=count(r.text);
             r.spans.push_back({start,end,l.resolved?"link":"unresolved"});
-            r.links.push_back({start,end,l.raw,l.resolved});
+            r.links.push_back({start,end,l.raw,l.resolved,source_path});
         }
         return r;
     }
-    Render inlines(cmark_node* n) const {
-        Render r;for(auto c=cmark_node_first_child(n);c;c=cmark_node_next(c)) append(r,inline_node(c));return r;
+    Render text_run(const std::string& text) const {
+        std::vector<gunichar> chars;
+        for(const char* p=text.data();p<text.data()+text.size();p=g_utf8_next_char(p)) chars.push_back(g_utf8_get_char(p));
+        auto slice=[&](size_t a,size_t b) {std::string s;for(;a<b;++a) s+=utf8(chars[a]);return s;};
+        Render r;size_t plain=0,i=0;
+        while(i+2<chars.size()) {
+            if(chars[i]!='='||chars[i+1]!='='||chars[i+2]=='='||g_unichar_isspace(chars[i+2])) {++i;continue;}
+            size_t j=i+3;
+            while(j+1<chars.size()&&!(chars[j]=='='&&chars[j+1]=='='&&!g_unichar_isspace(chars[j-1]))) ++j;
+            if(j+1>=chars.size()) {++i;continue;}
+            append(r,expand(slice(plain,i),false));
+            auto part=expand(slice(i+2,j),false);style(part,"highlight");append(r,std::move(part));
+            i=j+2;plain=i;
+        }
+        append(r,expand(slice(plain,chars.size()),false));return r;
     }
+    Render inline_range(cmark_node* c,cmark_node* stop=nullptr) const {
+        Render r;
+        while(c && c!=stop) {
+            if(cmark_node_get_type(c)==CMARK_NODE_TEXT) {
+                std::string run;
+                do {run+=literal(c);c=cmark_node_next(c);} while(c&&c!=stop&&cmark_node_get_type(c)==CMARK_NODE_TEXT);
+                append(r,text_run(run));
+            } else {append(r,inline_node(c));c=cmark_node_next(c);}
+        }
+        return r;
+    }
+    Render inlines(cmark_node* n) const {return inline_range(cmark_node_first_child(n));}
     Render inline_node(cmark_node* n) const {
         auto type=cmark_node_get_type(n);Render r;
         switch(type) {
@@ -123,11 +157,27 @@ struct Renderer {
         int width=count(prefix);
         auto start=[&](int o) {return o+width*(std::upper_bound(inserts.begin(),inserts.end(),o)-inserts.begin());};
         auto end=[&](int o) {return o+width*(std::lower_bound(inserts.begin(),inserts.end(),o)-inserts.begin());};
+        for(auto& image:r.images) image.offset=start(image.offset);
         for(auto& t:r.tasks) t.offset=start(t.offset);
         for(auto& b:r.blocks) b.offset=start(b.offset);
         for(auto& s:r.spans) {s.start=start(s.start);s.end=end(s.end);}
+        for(auto& s:r.layout_spans) {s.start=start(s.start);s.end=end(s.end);}
         for(auto& l:r.links) {l.start=start(l.start);l.end=end(l.end);}
         r.text=std::move(text);return r;
+    }
+    void strip_block_id(Render& r,cmark_node* last) const {
+        if(!last||cmark_node_get_type(last)!=CMARK_NODE_TEXT) return;
+        auto text=literal(last);size_t id=text.size();
+        while(id>0&&(g_ascii_isalnum(text[id-1])||text[id-1]=='-')) --id;
+        if(id==text.size()||id==0||text[id-1]!='^') return;
+        size_t a=id-1;while(a>0&&(text[a-1]==' '||text[a-1]=='\t')) --a;
+        if(a==id-1) return;
+        int limit=count(r.text)-count(text.substr(a));
+        if(limit<0) return;
+        r.text.resize(g_utf8_offset_to_pointer(r.text.data(),limit)-r.text.data());
+        for(auto& span:r.spans) span.end=std::min(span.end,limit);
+        for(auto& link:r.links) link.end=std::min(link.end,limit);
+        r.links.erase(std::remove_if(r.links.begin(),r.links.end(),[](const RenderLink& l){return l.start>=l.end;}),r.links.end());
     }
     Render block(cmark_node* n) const {
         auto r=block_contents(n);
@@ -171,6 +221,34 @@ struct Renderer {
         }
         switch(type) {
         case CMARK_NODE_PARAGRAPH: {
+            auto only=cmark_node_first_child(n);
+            if(only&&!cmark_node_next(only)&&cmark_node_get_type(only)==CMARK_NODE_TEXT) {
+                auto value=literal(only);
+                auto first=value.find_first_not_of(" \t\r\n");
+                value=first==std::string::npos?"":value.substr(first,value.find_last_not_of(" \t\r\n")-first+1);
+                if(g_utf8_strlen(value.c_str(),value.size())==1) {
+                    auto it=tokens.find(g_utf8_get_char(value.c_str()));
+                    if(it!=tokens.end()&&it->second.embed&&!it->second.markdown&&it->second.resolved) {
+                        auto path=*it->second.resolved;auto ext=fs::path(path).extension().string();
+                        std::transform(ext.begin(),ext.end(),ext.begin(),[](unsigned char c){return g_ascii_tolower(c);});
+                        if(ext==".png"||ext==".jpg"||ext==".jpeg"||ext==".gif"||ext==".bmp"||ext==".webp") {
+                            r.text="\xEF\xBF\xBC";style(r,"image");r.images.push_back({0,path});return r;
+                        }
+                        if(is_note(path)&&embed_stack.size()<4&&
+                           std::find(embed_stack.begin(),embed_stack.end(),path)==embed_stack.end()) {
+                            try {
+                                Document doc;doc.load(*vault,path);
+                                auto part=vault->render(path,doc.text,it->second.heading.value_or(""));
+                                if(!part.text.empty()) {
+                                    part.blocks.clear();part.tasks.clear();
+                                    part.spans.erase(std::remove_if(part.spans.begin(),part.spans.end(),[](const Span& s){return s.style=="task";}),part.spans.end());
+                                    style(part,"embed");return part;
+                                }
+                            } catch(const std::exception&) {}
+                        }
+                    }
+                }
+            }
             r=inlines(n);
             auto last=cmark_node_last_child(n);
             if(last&&cmark_node_get_type(last)==CMARK_NODE_TEXT) {
@@ -201,7 +279,71 @@ struct Renderer {
         case CMARK_NODE_THEMATIC_BREAK:
             for(int i=0;i<20;++i) r.text+="─";
             style(r,"rule");return r;
-        case CMARK_NODE_BLOCK_QUOTE:r=blocks(n,"\n\n");style(r,"quote");return r;
+        case CMARK_NODE_BLOCK_QUOTE: {
+            auto para=cmark_node_first_child(n);
+            if(para&&cmark_node_get_type(para)==CMARK_NODE_PARAGRAPH) {
+                auto br=cmark_node_first_child(para);
+                while(br&&cmark_node_get_type(br)!=CMARK_NODE_SOFTBREAK&&cmark_node_get_type(br)!=CMARK_NODE_LINEBREAK) br=cmark_node_next(br);
+                auto head=inline_range(cmark_node_first_child(para),br);
+                if(!br) strip_block_id(head,cmark_node_last_child(para));
+                // Parse the ASCII marker without recursive regex matching. The title
+                // uses Python's non-DOTALL semantics: CR is allowed, LF is not.
+                const auto& h=head.text;
+                size_t pos=0, type_start=2, type_end=0, marker_end=0, title_start=0;
+                char sign=0;bool has_title=false, matched=false;
+                if(h.size()>=3&&h[0]=='['&&h[1]=='!') {
+                    pos=2;
+                    while(pos<h.size()&&((h[pos]>='A'&&h[pos]<='Z')||(h[pos]>='a'&&h[pos]<='z')||
+                          (h[pos]>='0'&&h[pos]<='9')||h[pos]=='_'||h[pos]=='-')) ++pos;
+                    type_end=pos;
+                    if(pos>type_start&&pos<h.size()&&h[pos]==']') {
+                        ++pos;
+                        if(pos<h.size()&&(h[pos]=='+'||h[pos]=='-')) sign=h[pos++];
+                        marker_end=pos;
+                        if(pos<h.size()&&(h[pos]==' '||h[pos]=='\t')) {
+                            has_title=true;
+                            while(pos<h.size()&&(h[pos]==' '||h[pos]=='\t')) ++pos;
+                            title_start=pos;pos=h.size();
+                        }
+                        matched=pos==h.size()&&h.find('\n')==std::string::npos;
+                    }
+                }
+                if(matched) {
+                    int marker=count(h.substr(0,marker_end));
+                    bool valid=true;
+                    for(auto& span:head.spans) if(span.start<marker) valid=false;
+                    for(auto& link:head.links) if(link.start<marker) valid=false;
+                    if(valid) {
+                        std::string type=h.substr(type_start,type_end-type_start),kind=type;
+                        std::transform(kind.begin(),kind.end(),kind.begin(),[](unsigned char c){return g_ascii_tolower(c);});
+                        if(kind!="note"&&kind!="tip"&&kind!="warning"&&kind!="danger"&&kind!="question"&&kind!="quote") kind="note";
+                        Render title;
+                        if(has_title&&title_start<h.size()) {
+                            int shift=count(h.substr(0,title_start));
+                            title.text=h.substr(title_start);
+                            for(auto span:head.spans) if(span.end>shift) {span.start=std::max(0,span.start-shift);span.end-=shift;title.spans.push_back(span);}
+                            for(auto link:head.links) if(link.end>shift) {link.start=std::max(0,link.start-shift);link.end-=shift;title.links.push_back(link);}
+                        } else {
+                            std::transform(type.begin(),type.end(),type.begin(),[](unsigned char c){return g_ascii_tolower(c);});
+                            type[0]=g_ascii_toupper(type[0]);title.text=type;
+                        }
+                        style(title,"callout-title");append(r,std::move(title));int title_end=count(r.text);
+                        r.blocks.push_back({cmark_node_get_start_line(para),0});
+                        if(br) {
+                            auto body=inline_range(cmark_node_next(br));
+                            strip_block_id(body,cmark_node_last_child(para));
+                            if(!body.text.empty()) {r.text+='\n';append(r,std::move(body));}
+                        }
+                        for(auto child=cmark_node_next(para);child;child=cmark_node_next(child)) {
+                            r.text+=count(r.text)==title_end?"\n":"\n\n";append(r,block(child));
+                        }
+                        if(sign=='-'&&count(r.text)>title_end) r.spans.push_back({title_end,count(r.text),"folded"});
+                        style(r,"callout-"+kind);return r;
+                    }
+                }
+            }
+            r=blocks(n,"\n\n");style(r,"quote");return r;
+        }
         case CMARK_NODE_LIST: {
             int index=cmark_node_get_list_start(n);bool first=true;
             for(auto item=cmark_node_first_child(n);item;item=cmark_node_next(item),++index) {
@@ -245,9 +387,10 @@ size_t body_start(const std::string& text) {
     return 0;
 }
 }
-Render Vault::render(const std::string& source,const std::string& text) const {
+Render Vault::render(const std::string& source,const std::string& text,const std::string& selection) const {
     if(!g_utf8_validate(text.data(),text.size(),nullptr)) throw std::runtime_error("note is not UTF-8 text");
-    Renderer renderer;renderer.source_name=fs::path(source).stem().string();
+    struct StackGuard { StackGuard(const std::string& p) {embed_stack.push_back(p);} ~StackGuard() {embed_stack.pop_back();} } guard(source);
+    Renderer renderer;renderer.vault=this;renderer.source_path=source;renderer.source_name=fs::path(source).stem().string();
     auto found=all_links(source,text);std::string replaced;size_t cursor=0;
     // Keep parser byte coordinates tied to the original bytes even when a link
     // is replaced by a private-use token of a different encoded length.
@@ -301,7 +444,36 @@ Render Vault::render(const std::string& source,const std::string& text) const {
     std::unique_ptr<cmark_node,decltype(&cmark_node_free)> doc(cmark_parser_finish(parser),cmark_node_free);
     cmark_parser_free(parser);
     if(!doc) throw std::runtime_error("cannot parse Markdown");
-    Render result=renderer.blocks(doc.get(),"\n\n");
+    Render result;
+    if(selection.empty()) result=renderer.blocks(doc.get(),"\n\n");
+    else {
+        // Prefix a newline to distinguish a match on the first line from no match.
+        int offset=heading_offset("\n"+text,selection);
+        if(offset) {
+            const char* pos=g_utf8_offset_to_pointer(text.c_str(),offset-1);
+            int line=1+std::count(text.c_str(),pos,'\n')-removed;
+            if(selection[0]=='^') {
+                cmark_node* chosen=nullptr;
+                std::function<void(cmark_node*)> visit=[&](cmark_node* n) {
+                    auto type=cmark_node_get_type(n);
+                    if((type&CMARK_NODE_TYPE_MASK)==CMARK_NODE_TYPE_BLOCK&&type!=CMARK_NODE_DOCUMENT&&type!=CMARK_NODE_LIST&&cmark_node_get_start_line(n)<=line&&line<=cmark_node_get_end_line(n)) chosen=n;
+                    for(auto c=cmark_node_first_child(n);c;c=cmark_node_next(c)) visit(c);
+                };
+                visit(doc.get());if(chosen) result=renderer.block(chosen);
+            } else {
+                for(auto n=cmark_node_first_child(doc.get());n;n=cmark_node_next(n)) {
+                    if(cmark_node_get_type(n)!=CMARK_NODE_HEADING||cmark_node_get_start_line(n)!=line) continue;
+                    int level=cmark_node_get_heading_level(n);bool first=true;
+                    for(;n;n=cmark_node_next(n)) {
+                        if(!first&&cmark_node_get_type(n)==CMARK_NODE_HEADING&&cmark_node_get_heading_level(n)<=level) break;
+                        if(!first) result.text+="\n\n";
+                        first=false;append(result,renderer.block(n));
+                    }
+                    break;
+                }
+            }
+        }
+    }
     std::vector<Block> positions;
     for(auto b:result.blocks) {
         b.line+=removed;

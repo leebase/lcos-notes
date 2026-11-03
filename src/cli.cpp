@@ -2,6 +2,7 @@
 // Copyright 2026 Lee Harrington
 #include "core.hpp"
 #include <iostream>
+#include <glib.h>
 using namespace notes;
 static std::string array(const std::vector<std::string>& values) {
     std::string out="["; bool first=true;
@@ -16,6 +17,15 @@ int main(int argc,char** argv) {
         if(argc<3) throw std::runtime_error("usage: lcos-notes-cli notes|links|mdlinks|resolve|switch|create|tags|tagged|find|backlinks|mentions|retag|rename|render|blocks|tasks VAULT [arguments]");
         std::string command=argv[1],out; Vault vault(argv[2]);
         if(command=="notes" && argc==3) out=array(vault.notes());
+        else if(command=="highlights" && argc==4) {
+            Document doc;doc.load(vault,argv[3]);auto r=vault.render(doc.path,doc.text);out="[";
+            for(auto& s:r.spans) if(s.style=="highlight") {
+                if(out.size()>1) out+=",";
+                auto a=g_utf8_offset_to_pointer(r.text.c_str(),s.start), b=g_utf8_offset_to_pointer(r.text.c_str(),s.end);
+                out+="{\"start\":"+std::to_string(s.start)+",\"end\":"+std::to_string(s.end)+",\"text\":"+quote(std::string(a,b))+"}";
+            }
+            out+="]";
+        }
         else if(command=="tasks" && argc==4) {
             Document doc;doc.load(vault,argv[3]);auto r=vault.render(doc.path,doc.text);out="[";
             for(auto& t:r.tasks) {if(out.size()>1) out+=",";out+="{\"line\":"+std::to_string(t.line)+",\"col\":"+std::to_string(t.col)+",\"checked\":"+(t.checked?"true":"false")+",\"offset\":"+std::to_string(t.offset)+"}";}
@@ -33,6 +43,8 @@ int main(int argc,char** argv) {
             for(auto& s:r.spans) {if(out.back()!= '[') out+=",";out+="{\"start\":"+std::to_string(s.start)+",\"end\":"+std::to_string(s.end)+",\"style\":"+quote(s.style)+"}";}
             out+="],\"links\":[";
             for(auto& l:r.links) {if(out.back()!= '[') out+=",";out+="{\"start\":"+std::to_string(l.start)+",\"end\":"+std::to_string(l.end)+",\"raw\":"+quote(l.raw)+",\"resolved\":"+json(l.resolved)+"}";}
+            out+="],\"images\":[";
+            for(auto& image:r.images) {if(out.back()!='[') out+=",";out+="{\"offset\":"+std::to_string(image.offset)+",\"path\":"+quote(image.path)+"}";}
             out+="]}";
         }
         else if(command=="tags" && argc==3) {

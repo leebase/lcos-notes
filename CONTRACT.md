@@ -794,9 +794,149 @@ Disk (Ctrl+Shift+R) and the `tasks` command; its "Not supported yet" list drops 
 delivers and mentions that task items inside block quotes are not recognized. The CLI man
 page documents `tasks`.
 
+## U8: embeds, highlights and callouts
+
+U8 adds these to U1–U7; everything above stays in force except where a rule below replaces
+it. The project version is `0.8.0` (wherever U7 names `0.7.0` as the project or package
+version). No new runtime library is added (images are loaded with GdkPixbuf, which GTK
+already brings). Designs: SECOND-BRAIN.md D1, D2 and D4.
+
+### Highlights
+
+A highlight is Obsidian's `==text==`. It is found on cmark's tree, after parsing (U3 rule
+1), never inside literal text:
+
+- Take every maximal run of consecutive `text` nodes that are siblings (children of the
+  same paragraph, heading, table cell, emphasis, strong, link, image or strikethrough
+  node). Concatenate their literals into one string S (placeholders included; each is one
+  character). A soft break, line break, code span, raw HTML or any other inline node ends
+  a run, so a highlight never crosses one.
+- Scan S from left to right. At a position i where S has `==`, an opening delimiter needs a
+  character at i+2 that is neither whitespace (`g_unichar_isspace`) nor `=`. Its closing
+  delimiter is the first `==` at a position j ≥ i+3 whose preceding character (j−1) is
+  not whitespace. If there is one, S[i+2, j) is a highlight and scanning continues at j+2;
+  otherwise the scan continues at i+1. Highlights never nest, and a backslash does not
+  escape `=` here (cmark has already removed it).
+- The delimiters are not rendered. The highlight's text renders by rule 3 (placeholders
+  become links) with the span `highlight` over it.
+
+CLI: `highlights VAULT NOTE` → `[{"start", "end", "text"}]`, one entry per `highlight`
+span of the note's rendering, in order (embedded content included), with `text` the
+rendered text of the span. A note that is not valid UTF-8 is exit 2 `refused: <reason>`.
+
+### Callouts
+
+A block quote is a *callout* when its first child is a paragraph whose *head* (its inline
+children before its first soft or line break, all of them if there is none), rendered by
+rule 3 into the text H, matches `^\[!([A-Za-z0-9_-]+)\]([+-]?)(?:[ \t]+(.*))?$` (Python
+`re.fullmatch` semantics on H) with no span or link of the head starting before the end of
+the match's group 2. Then:
+
+- TYPE is group 1; the *kind* is TYPE in ASCII lower case if it is one of `note`, `tip`,
+  `warning`, `danger`, `question`, `quote`, and `note` otherwise. The title T is group 3
+  with its spans and links (shifted); when group 3 is absent or empty, T is TYPE with its
+  first character in ASCII upper case and the rest in ASCII lower case, with no spans.
+- The *body* is the rest of the first paragraph (its inline children after the first
+  break, which is dropped, rendered by rule 3) as one block, if not empty, followed by
+  the block quote's other children; body blocks are joined by `\n\n` as in a block quote.
+- The callout renders as T, then `\n` and the body if the body is not empty. Spans:
+  `callout-<kind>` over the whole callout, `callout-title` over T, and, when group 2 is
+  `-`, `folded` from the end of T to the end of the callout (when the body is not empty).
+  A callout has no `quote` span.
+- `blocks` entries are made as for a block quote: the first paragraph's entry is at the
+  callout's start, and each other child has its own entry.
+- U6's block-ID rule applies to the first paragraph's last part: the title when the
+  paragraph has no break, otherwise the rest of the paragraph.
+
+Any other block quote renders as before.
+
+### Embeds
+
+A paragraph whose inline content is exactly one placeholder (cmark gives one `text` node
+whose literal, without leading or trailing whitespace, is that one character) for a U1
+wikilink with `embed: true` is an *embed paragraph*. Markdown images and embeds that share
+a paragraph with other text are not embed paragraphs; they render as before. An embed
+paragraph renders by the first rule that applies:
+
+1. The link is unresolved, or resolves to a file that is neither a note nor an image →
+   as before (rule 4).
+2. It resolves to an image, a file whose name ends in `.png`, `.jpg`, `.jpeg`, `.gif`,
+   `.bmp` or `.webp` (ASCII case-insensitive) → one U+FFFC character with the span
+   `image`, and an entry `{"offset", "path"}` (its offset in `text`, the vault-relative
+   path) in the render's `images` array. It adds no `links` entry.
+3. It resolves to a note N that is on the *embed stack* (the note being rendered, plus
+   every note whose embedding is being rendered around this paragraph), or the paragraph
+   is inside content embedded three levels deep → as before (rule 4).
+4. N's file is not valid UTF-8 → as before (rule 4).
+5. Otherwise N's text is parsed exactly like a note being rendered (its own links,
+   placeholders and frontmatter removal, U1–U7 rules) and a part of its document is
+   selected:
+   - no heading (absent or empty after trimming): all of N's top-level blocks;
+   - a heading starting with `^` (a U5 block reference): find the line L by the U5
+     block-reference rule; the part is the last node, in the pre-order of U6's `blocks`
+     (every block node except the document and list nodes), whose start line ≤ L ≤ end
+     line (cmark's end line);
+   - any other heading: find the line L by U1's heading rule (the first ATX heading line
+     whose text equals the heading after case folding); the part is the top-level
+     heading node that starts on L and every top-level block after it up to, not
+     including, the next top-level heading node of the same or a lower level number.
+   If no part is found (no such line, or the line is not where such a node starts), or
+   the selected part renders to an empty text, the paragraph renders as before (rule 4).
+   Otherwise the paragraph renders as the part's blocks, rendered from N (links resolve
+   from N; the source name for empty targets is N's), joined by `\n\n`, with N pushed on
+   the embed stack and one more level of depth, and the span `embed` over the result.
+   Embedded content adds no `blocks` entries (the embed paragraph keeps its own) and no
+   `tasks` entries, and its `task` spans are dropped (its boxes and `done` spans stay).
+   Its links, spans and images are kept.
+
+`render` gains `"images": [{"offset", "path"}, ...]` (in rendered order; `[]` when there
+are none) after `links`. `blocks`, `tasks` and `highlights` use the same rendering.
+
+### Reading view
+
+- Styles: `highlight` has the background #FFE066. A callout has a background by kind: note
+  #E3EEFB, tip #E2F5E7, warning #FFF1D6, danger #FBE2E2, question #EFE6FA, quote #EEEEEE;
+  `callout-title` is bold. `embed` has a left margin of 24 px more than its surroundings.
+  These replace the theme's colors only where they apply.
+- An `image` character shows the image file, loaded with GdkPixbuf, scaled down (never
+  up), keeping its aspect ratio, to fit the reading view's width inside its margins. A file
+  GdkPixbuf cannot load shows `[image: <path>]` in the U2 unresolved color instead. The
+  image counts as one character, so every rendered offset is unchanged.
+- `folded` text is hidden. A plain left click on a folded callout's title (one that puts
+  the reading caret at an offset from the title's start to its end, inclusive) shows its
+  body, and a second such click hides it again. The folded state is not saved; re-rendering (opening
+  a note, saving, a change on disk) folds it again.
+- Links in embedded content are followed like any reading-view link.
+- When any note in the vault changes on disk (U7), the reading view re-renders within 2
+  seconds, so embedded content follows its source, keeping the reading caret's offset
+  (clamped to the new text).
+
+### Editing highlights
+
+- Edit > Highlight (Ctrl+Shift+H), in the editor: with a selection, if the two characters
+  before it and the two after it are both `==`, they are removed (unwrap); otherwise `==`
+  is inserted before and after it (wrap). Afterwards the same text is selected. With no
+  selection, `====` is inserted and the caret placed between the two pairs. Each use is one
+  undo step. In reading view it does nothing.
+- View > Highlights… (Ctrl+Shift+Y) opens a modal `Highlights` dialog listing the open
+  note's highlights (`highlights` rule, the current buffer) as one row each, showing its
+  text; the first row is selected. With no highlights the list is empty and a label reads
+  `No highlights in this note`. Enter or a double-click on a row closes the dialog, turns
+  reading view on if it was off, and places the reading caret at the highlight's `start`
+  with keyboard focus in the reading view. Escape closes it.
+
+### User documentation
+
+README.md states `Version 0.8.0.`; DOCUMENTATION.md begins `This guide covers version
+0.8.0.` and documents highlights (including Edit > Highlight and View > Highlights…),
+callouts (types, titles, folding), embeds of notes, headings, blocks and images (the depth
+limit and cycles render as links), and the `highlights` command; its "Not supported yet"
+list drops what U8 delivers and mentions Markdown image embeds (`![alt](file.png)`) and
+PDF embeds. The CLI man page documents `highlights` and the `images` field of `render`.
+
 ## Out of scope (tracked in `BACKLOG.md`)
 
 Markdown links with titles, reference-style links, NFC in search (U5 covers inline
-Markdown note links, block references and NFC names), attachments viewing, settings dialog,
-daily notes, graph view, multiple windows. Also out of scope from U3: following images and non-local links, embedding
-(transcluding) notes, GFM autolinks and footnotes, rendering attachments, repository publishing and signing of packages.
+Markdown note links, block references and NFC names), settings dialog,
+daily notes, graph view, multiple windows. Also out of scope: following non-local links, Markdown image embeds (`![alt](file.png)`),
+PDF embeds, `==` coloring in the editor, GFM autolinks and footnotes, repository publishing and signing of packages.

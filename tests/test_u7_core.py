@@ -11,6 +11,7 @@ from reference_links import markdown_links
 from reference_render import blocks as ref_blocks
 from reference_render import render as ref_render
 from reference_render import tasks as ref_tasks
+from u8_load import LOAD                                    # U8: embeds read the vault
 from test_u3_core import INLINE, _block, _vault
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -177,9 +178,9 @@ def test_gfm_render_blocks_and_tasks_match_reference(tmp_path, seed):
     for name, text in docs.items():
         links = cli_json("links", v, name)
         md = markdown_links(v, name, text, links)
-        assert cli_json("render", v, name) == ref_render(text, links, name, md), (name, text)
-        assert cli_json("blocks", v, name) == ref_blocks(text, links, name, md), (name, text)
-        assert cli_json("tasks", v, name) == ref_tasks(text, links, name, md), (name, text)
+        assert cli_json("render", v, name) == ref_render(text, links, name, md, LOAD(v)), (name, text)
+        assert cli_json("blocks", v, name) == ref_blocks(text, links, name, md, LOAD(v)), (name, text)
+        assert cli_json("tasks", v, name) == ref_tasks(text, links, name, md, LOAD(v)), (name, text)
 
 
 @pytest.mark.parametrize("seed", range(10))
@@ -204,15 +205,14 @@ def test_task_records_point_at_their_markers(tmp_path, seed):
 # ---------------------------------------------------------------- documentation
 
 def test_user_docs_cover_u7():
+    """(The version strings are the current unit's: test_u8_core.)"""
     readme = (ROOT / "README.md").read_text()
-    assert "Version 0.7.0." in readme
-    update, install = readme.find("sudo apt update\n"), readme.find("sudo apt install ./lcos-notes_0.7.0_amd64.deb")
+    update, install = readme.find("sudo apt update\n"), readme.find("sudo apt install ./lcos-notes_")
     assert 0 <= update < install
     for term in ("libcmark-gfm-dev", "libcmark-gfm-extensions-dev"):
         assert term in readme, term
     assert "libcmark0.30.2" not in readme and "libcmark-dev" not in readme
     guide = (ROOT / "DOCUMENTATION.md").read_text()
-    assert "This guide covers version 0.7.0." in guide
     for term in ("table", "task", "Space", "strikethrough", "Reload from Disk", "Ctrl+Shift+R", "tasks",
                  "block quote"):
         assert term.lower() in guide.lower(), term

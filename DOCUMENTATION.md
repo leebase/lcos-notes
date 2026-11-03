@@ -1,4 +1,4 @@
-This guide covers version 0.7.0. The exact rules behind each feature are in
+This guide covers version 0.8.0. The exact rules behind each feature are in
 [CONTRACT.md](CONTRACT.md).
 
 ## Vaults and notes
@@ -239,6 +239,7 @@ lcos-notes-cli rename    VAULT OLD NEW
 lcos-notes-cli render    VAULT NOTE            # reading-view text, styles, links
 lcos-notes-cli blocks    VAULT NOTE            # reading-view block positions
 lcos-notes-cli tasks     VAULT NOTE            # task markers and reading-view offsets
+lcos-notes-cli highlights VAULT NOTE           # rendered highlight ranges
 ```
 
 `man lcos-notes` and `man lcos-notes-cli` have the same reference offline.
@@ -249,7 +250,7 @@ These are not supported yet:
 - Markdown links with titles and reference-style note links;
 - following images or non-local links, and NFC normalization in search;
 - task items inside block quotes (not recognized by the supported parser);
-- showing embedded notes and images or viewing attachments;
+- Markdown image embeds (`![alt](file.png)`), PDF embeds and viewing other attachments;
 - a settings dialog, daily notes, a graph view and multiple windows.
 
 Package publishing and signing are also unsupported.
@@ -288,3 +289,27 @@ unless another file has appeared there. External changes also refresh Notes,
 Tags, Backlinks and Unlinked mentions within two seconds, preserving existing
 folder expansion, selection and Tags state. The app's own writes do not trigger
 external reloads.
+
+## Highlights
+
+In reading view, `==text==` highlights text. Edit > Highlight (Ctrl+Shift+H)
+wraps or unwraps the selection; without a selection it inserts empty delimiters.
+The `highlights` command reports rendered highlight ranges and text.
+
+View > Highlights… (Ctrl+Shift+Y) lists the current note's highlights. Select a
+row and press Enter or double-click it to jump there in reading view; Escape closes
+the dialog.
+
+## Callouts and embeds
+
+Begin a block quote with `[!note]`, `[!tip]`, `[!warning]`, `[!danger]`,
+`[!question]` or `[!quote]` for a colored callout. Add a title after the marker;
+otherwise the type supplies the title. Add `-` after the marker to fold the body,
+or `+` for an initially open body. Click a folded callout's title to open or
+close it; folding is reset on re-render.
+
+A standalone `![[Note]]` embeds a note, `![[Note#Heading]]` a heading section,
+and `![[Note#^block-id]]` a block. Standalone image embeds such as
+`![[photo.png]]` display the image. Embedded notes use their own link locations;
+changes to source notes refresh reading view. Cycles and embeds beyond the depth limit of three
+levels render as links. Missing, invalid or empty targets also render as links.

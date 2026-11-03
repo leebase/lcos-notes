@@ -30,6 +30,25 @@ class Window : public Gtk::Window {
     Glib::RefPtr<Gtk::TextBuffer> reading_buffer=Gtk::TextBuffer::create();
     std::map<std::string,Glib::RefPtr<Gtk::TextTag>> reading_tags;
     Render rendered;
+    struct ReadingImage { Gtk::Image* widget; Glib::RefPtr<Gdk::Pixbuf> pixbuf; int extra_margin; int offset; };
+    std::vector<ReadingImage> reading_images;
+    std::vector<bool> fold_closed;
+    std::map<int,Glib::RefPtr<Gtk::TextTag>> margin_tags;
+    int extra_margin(int offset) const {
+        int margin=0;
+        for(const auto& span:rendered.layout_spans)
+            if(span.start<=offset&&offset<span.end) margin+=24;
+        return margin;
+    }
+    void update_folds() {
+        reading_buffer->remove_tag(reading_tags.at("folded"),reading_buffer->begin(),reading_buffer->end());
+        size_t index=0;
+        for(const auto& span:rendered.spans) if(span.style=="folded") {
+            if(fold_closed[index]) reading_buffer->apply_tag(reading_tags.at("folded"),
+                reading_buffer->get_iter_at_offset(span.start),reading_buffer->get_iter_at_offset(span.end));
+            ++index;
+        }
+    }
     bool reading=false;
     bool reading_scroll_pending=false;
     bool initial_geometry_pending=true;
@@ -96,13 +115,15 @@ class Window : public Gtk::Window {
     void reload_disk() {
         if(document.path.empty()) return;
         auto at=buffer->get_iter_at_mark(buffer->get_insert());int line=at.get_line(),col=at.get_line_offset();
+        int reading_offset=reading_buffer->get_iter_at_mark(reading_buffer->get_insert()).get_offset();
         try {
             Document next;next.load(vault,document.path);document=next;
             loading=true;buffer->begin_not_undoable_action();buffer->set_text(document.text);buffer->end_not_undoable_action();buffer->set_modified(false);loading=false;
             line=std::min(line,buffer->get_line_count()-1);at=buffer->get_iter_at_line(line);
             int length=0;if(!at.ends_line()) {auto end=at;end.forward_to_line_end();length=end.get_line_offset();}
             at.forward_chars(std::min(col,length));buffer->place_cursor(at);editor.scroll_to(at,0.1);
-            refresh_u2(nullptr,true);if(reading) refresh_reading();update_title();message("Reloaded: changed on disk");
+            refresh_u2(nullptr,true);if(reading) {refresh_reading();reading_buffer->place_cursor(reading_buffer->get_iter_at_offset(std::min(reading_offset,reading_buffer->get_char_count())));}
+            update_title();message("Reloaded: changed on disk");
         } catch(const std::exception& e) {loading=false;message(std::string("refused: ")+e.what());}
     }
     bool external_changes() {
@@ -177,9 +198,87 @@ class Window : public Gtk::Window {
     void focus_content() {if(reading) reading_view.grab_focus();else editor.grab_focus();}
     void refresh_reading() {
         rendered=document.path.empty()?Render{}:vault.render(document.path,value());
+        reading_images.clear();
         reading_buffer->set_text(rendered.text);
-        for(auto& s:rendered.spans) reading_buffer->apply_tag(reading_tags.at(s.style),reading_buffer->get_iter_at_offset(s.start),reading_buffer->get_iter_at_offset(s.end));
+        for(auto& image:rendered.images) {
+            auto at=reading_buffer->get_iter_at_offset(image.offset), end=reading_buffer->get_iter_at_offset(image.offset+1);
+            reading_buffer->erase(at,end);at=reading_buffer->get_iter_at_offset(image.offset);
+            try {
+                auto pix=Gdk::Pixbuf::create_from_file((vault.root/image.path).string());
+                auto anchor=reading_buffer->create_child_anchor(at);
+                auto widget=Gtk::manage(new Gtk::Image());
+                reading_view.add_child_at_anchor(*widget,anchor);widget->show();
+                int margin=extra_margin(image.offset);
+                reading_images.push_back({widget,pix,margin,image.offset});
+            } catch(const Glib::Error&) {
+                auto anchor=reading_buffer->create_child_anchor(at);
+                auto label=Gtk::manage(new Gtk::Label("[image: "+image.path+"]"));
+                label->override_color(Gdk::RGBA("#a33b24"));reading_view.add_child_at_anchor(*label,anchor);label->show();
+            }
+        }
+        resize_reading_images();
+        fold_closed.clear();
+        std::set<int> boundaries{0,reading_buffer->get_char_count()};
+        std::set<int> callout_boundaries;
+        for(auto& s:rendered.spans) {
+            if(s.style=="folded") {fold_closed.push_back(true);continue;}
+            if(s.style.compare(0,8,"callout-")==0 && s.style!="callout-title") {
+                callout_boundaries.insert(s.start);callout_boundaries.insert(s.end);continue;
+            }
+            reading_buffer->apply_tag(reading_tags.at(s.style),reading_buffer->get_iter_at_offset(s.start),reading_buffer->get_iter_at_offset(s.end));
+        }
+        // Apply only the innermost callout on each interval. GTK tag priority
+        // is global, so overlapping kind tags cannot express nesting order.
+        for(auto it=callout_boundaries.begin();it!=callout_boundaries.end();) {
+            int start=*it++;if(it==callout_boundaries.end()) break;
+            int end=*it;const decltype(rendered.spans)::value_type* inner=nullptr;
+            for(const auto& s:rendered.spans)
+                if(s.style.compare(0,8,"callout-")==0 && s.style!="callout-title" &&
+                   s.start<=start && end<=s.end &&
+                   (!inner || s.end-s.start<inner->end-inner->start)) inner=&s;
+            if(inner) reading_buffer->apply_tag(reading_tags.at(inner->style),
+                reading_buffer->get_iter_at_offset(start),reading_buffer->get_iter_at_offset(end));
+        }
+        for(const auto& s:rendered.layout_spans) {boundaries.insert(s.start);boundaries.insert(s.end);}
+        // GTK margins are paragraph properties. Include the list prefix when
+        // an embedded range begins after it, and restore the next line's margin.
+        for(int line=0;line<reading_buffer->get_line_count();++line) {
+            auto begin=reading_buffer->get_iter_at_line(line),end=begin;
+            if(!end.forward_line()) end=reading_buffer->end();
+            int first=begin.get_offset(),last=end.get_offset();
+            int margin=extra_margin(first);
+            for(auto it=boundaries.upper_bound(first);it!=boundaries.end()&&*it<last;++it)
+                margin=std::max(margin,extra_margin(*it));
+            if(!margin) continue;
+            if(!margin_tags.count(margin)) {
+                auto tag=reading_buffer->create_tag();tag->property_left_margin()=12+margin;
+                margin_tags[margin]=tag;
+            }
+            reading_buffer->apply_tag(margin_tags.at(margin),begin,end);
+        }
+        update_folds();
+        Glib::signal_idle().connect_once([this]{resize_reading_images();});
         place_reading_caret();
+    }
+    void resize_reading_images() {
+        int allocated=reading_view.get_allocated_width();
+        if(allocated<=1) allocated=editor.get_allocated_width();
+        for(auto& image:reading_images) {
+            auto pix=image.pixbuf;
+            Gdk::Rectangle rect;
+            auto at=reading_buffer->get_iter_at_offset(image.offset),line_start=at;
+            line_start.set_line_offset(0);
+            auto prefix=reading_view.create_pango_layout(reading_buffer->get_text(line_start,at));
+            int prefix_width=0,prefix_height=0;prefix->get_pixel_size(prefix_width,prefix_height);
+            reading_view.get_iter_location(at,rect);
+            int actual_left=std::max(reading_view.get_left_margin()+image.extra_margin+prefix_width,rect.get_x());
+            // Leave a few pixels for GTK/Pango rounding after an inline list marker.
+            int target=std::min(std::max(1,allocated-reading_view.get_right_margin()-actual_left-(prefix_width?4:0)),pix->get_width());
+            auto current=image.widget->get_pixbuf();
+            if(current&&current->get_width()==target) continue;
+            if(target<pix->get_width()) pix=pix->scale_simple(target,std::max(1,pix->get_height()*target/pix->get_width()),Gdk::INTERP_BILINEAR);
+            image.widget->set(pix);
+        }
     }
     void place_reading_caret() {
         int line=buffer->get_iter_at_mark(buffer->get_insert()).get_line()+1,offset=0;
@@ -213,7 +312,7 @@ class Window : public Gtk::Window {
                 if(l.resolved&&!is_note(*l.resolved)) {message("Not a note: "+*l.resolved);return;}
                 if(!save()) return;
                 auto path=l.resolved;
-                if(!path) {open_created(vault.create(creation_target(document.path,link)),link.heading);return;}
+                if(!path) {open_created(vault.create(creation_target(l.source,link)),link.heading);return;}
                 open_note(*path,link.heading);
             } catch(const std::exception& e) {message(std::string("refused: ")+e.what());}
             return;
@@ -603,6 +702,54 @@ class Window : public Gtk::Window {
         }
         return true;
     }
+    void edit_highlight() {
+        if(reading||document.path.empty()) return;
+        Gtk::TextBuffer::iterator a,b;
+        bool selected=buffer->get_selection_bounds(a,b);
+        int start=selected?a.get_offset():buffer->get_iter_at_mark(buffer->get_insert()).get_offset();
+        int end=selected?b.get_offset():start;
+        Glib::ustring all=buffer->get_text();
+        bool unwrap=selected&&start>=2&&end+2<=int(all.size())&&all.substr(start-2,2)=="=="&&all.substr(end,2)=="==";
+        buffer->begin_user_action();
+        if(unwrap) {
+            buffer->erase(buffer->get_iter_at_offset(end),buffer->get_iter_at_offset(end+2));
+            buffer->erase(buffer->get_iter_at_offset(start-2),buffer->get_iter_at_offset(start));
+            start-=2;end-=2;
+        } else {
+            buffer->insert(buffer->get_iter_at_offset(end),"==");
+            buffer->insert(buffer->get_iter_at_offset(start),"==");
+            start+=2;end+=2;
+        }
+        if(selected) buffer->select_range(buffer->get_iter_at_offset(start),buffer->get_iter_at_offset(end));
+        else buffer->place_cursor(buffer->get_iter_at_offset(start));
+        buffer->end_user_action();
+    }
+    void highlights_dialog() {
+        if(document.path.empty()) return;
+        auto result=vault.render(document.path,value());
+        Gtk::Dialog dialog("Highlights",*this,true);dialog.set_default_size(420,260);
+        Gtk::ScrolledWindow scroll;Gtk::TreeView list;auto model=Gtk::ListStore::create(columns);
+        list.set_model(model);list.append_column("Highlight",columns.label);list.set_headers_visible(false);
+        Glib::ustring text=result.text;
+        for(auto& span:result.spans) if(span.style=="highlight") {
+            auto row=*model->append();row[columns.label]=text.substr(span.start,span.end-span.start);row[columns.line]=span.start;
+        }
+        if(!model->children().empty()) list.get_selection()->select(model->children().begin());
+        else {auto label=Gtk::manage(new Gtk::Label("No highlights in this note"));dialog.get_content_area()->pack_start(*label,Gtk::PACK_SHRINK);}
+        scroll.add(list);dialog.get_content_area()->pack_start(scroll);
+        list.signal_row_activated().connect([&](const Gtk::TreeModel::Path&,Gtk::TreeViewColumn*){dialog.response(Gtk::RESPONSE_OK);});
+        dialog.signal_key_press_event().connect([&](GdkEventKey* e) {
+            if(e->keyval==GDK_KEY_Escape) {dialog.response(Gtk::RESPONSE_CANCEL);return true;}
+            if(e->keyval==GDK_KEY_Return||e->keyval==GDK_KEY_KP_Enter) {dialog.response(Gtk::RESPONSE_OK);return true;}
+            return false;
+        },false);
+        dialog.show_all();list.grab_focus();
+        if(dialog.run()==Gtk::RESPONSE_OK) {
+            auto row=list.get_selection()->get_selected();
+            if(row) {int offset=(*row)[columns.line];if(!reading) toggle_reading();
+                reading_buffer->place_cursor(reading_buffer->get_iter_at_offset(offset));reading_view.grab_focus();scroll_reading_caret();}
+        }
+    }
     bool key(GdkEventKey* event) {
         if(reading&&reading_view.has_focus()&&event->keyval==GDK_KEY_space&&!(event->state&(GDK_CONTROL_MASK|GDK_MOD1_MASK))) {
             toggle_task(reading_buffer->get_iter_at_mark(reading_buffer->get_insert()).get_offset());return true;
@@ -613,6 +760,8 @@ class Window : public Gtk::Window {
             if(tags_tree.has_focus()) return sidebar_arrow(tags_tree,tag_store,event->keyval);
             if(tree.has_focus()) return sidebar_arrow(tree,store,event->keyval);
         }
+        if(ctrl&&shift&&(event->keyval==GDK_KEY_y||event->keyval==GDK_KEY_Y)) {highlights_dialog();return true;}
+        if(ctrl&&shift&&(event->keyval==GDK_KEY_h||event->keyval==GDK_KEY_H)) {edit_highlight();return true;}
         if(ctrl&&shift&&(event->keyval==GDK_KEY_r||event->keyval==GDK_KEY_R)) {reload_disk();return true;}
         if(event->keyval==GDK_KEY_F2) {rename_dialog(true);return true;}
         if(ctrl&&shift&&(event->keyval==GDK_KEY_e||event->keyval==GDK_KEY_E)) {focus_sidebar(false);return true;}
@@ -692,8 +841,8 @@ public:
             return false;
         });
         menu("_File",{{"New Note… (Ctrl+N)",[this]{new_note();}},{"Quick Switcher (Ctrl+O)",[this]{switcher();}},{"Save (Ctrl+S)",[this]{if(!reading) save();}},{"Reload from Disk (Ctrl+Shift+R)",[this]{reload_disk();}},{"_Rename… (F2)",[this]{rename_dialog();}},{"_Quit",[this]{close();}}});
-        menu("_Edit",{{"_Undo",[this]{if(!reading&&buffer->can_undo()) buffer->undo();}},{"_Redo",[this]{if(!reading&&buffer->can_redo()) buffer->redo();}},{"Cu_t",[this]{if(!reading) buffer->cut_clipboard(Gtk::Clipboard::get());}},{"_Copy",[this]{if(reading) reading_buffer->copy_clipboard(Gtk::Clipboard::get());else buffer->copy_clipboard(Gtk::Clipboard::get());}},{"_Paste",[this]{if(!reading) buffer->paste_clipboard(Gtk::Clipboard::get());}}});
-        menu("_View",{{"Focus _Editor",[this]{focus_content();}}});
+        menu("_Edit",{{"Highlight (Ctrl+Shift+H)",[this]{edit_highlight();}},{"_Undo",[this]{if(!reading&&buffer->can_undo()) buffer->undo();}},{"_Redo",[this]{if(!reading&&buffer->can_redo()) buffer->redo();}},{"Cu_t",[this]{if(!reading) buffer->cut_clipboard(Gtk::Clipboard::get());}},{"_Copy",[this]{if(reading) reading_buffer->copy_clipboard(Gtk::Clipboard::get());else buffer->copy_clipboard(Gtk::Clipboard::get());}},{"_Paste",[this]{if(!reading) buffer->paste_clipboard(Gtk::Clipboard::get());}}});
+        menu("_View",{{"Highlights… (Ctrl+Shift+Y)",[this]{highlights_dialog();}},{"Focus _Editor",[this]{focus_content();}}});
         auto view_item=dynamic_cast<Gtk::MenuItem*>(menubar.get_children().back());
         auto submenu=dynamic_cast<Gtk::Menu*>(view_item->get_submenu());
         reading_item=Gtk::manage(new Gtk::CheckMenuItem("_Reading View (Ctrl+E)",true));
@@ -703,7 +852,7 @@ public:
             {"Search Notes… (Ctrl+Shift+F)",[this]{search_dialog();}},{"Backlinks (Ctrl+Shift+B)",[this]{focus_backlinks();}},
             {"Notes (Ctrl+Shift+E)",[this]{focus_sidebar(false);}},{"Tags (Ctrl+Shift+T)",[this]{focus_sidebar(true);}},
             {"Unlinked Mentions (Ctrl+Shift+M)",[this]{focus_backlinks(true);}}});
-        menu("_Help",{{"_About",[this]{Gtk::AboutDialog dialog;dialog.set_transient_for(*this);dialog.set_program_name("LCOS Notes");dialog.set_version("0.7.0");dialog.set_copyright("Copyright 2026 Lee Harrington");dialog.set_license_type(Gtk::LICENSE_CUSTOM);dialog.set_wrap_license(true);dialog.set_license("Licensed under the Apache License, Version 2.0 (the \"License\"); you may not use this program except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.");dialog.set_comments("Offline Markdown notes for LCOS and X11 desktops. Apache-2.0.");dialog.run();}}});
+        menu("_Help",{{"_About",[this]{Gtk::AboutDialog dialog;dialog.set_transient_for(*this);dialog.set_program_name("LCOS Notes");dialog.set_version("0.8.0");dialog.set_copyright("Copyright 2026 Lee Harrington");dialog.set_license_type(Gtk::LICENSE_CUSTOM);dialog.set_wrap_license(true);dialog.set_license("Licensed under the Apache License, Version 2.0 (the \"License\"); you may not use this program except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.");dialog.set_comments("Offline Markdown notes for LCOS and X11 desktops. Apache-2.0.");dialog.run();}}});
         layout.pack_start(menubar,Gtk::PACK_SHRINK);layout.pack_start(panes);layout.pack_end(status,Gtk::PACK_SHRINK);
         tree.set_model(store);tree.append_column("Notes",columns.label);tree.set_headers_visible(false);
         tree_scroll.add(tree);tree_scroll.set_policy(Gtk::POLICY_AUTOMATIC,Gtk::POLICY_AUTOMATIC);
@@ -737,12 +886,22 @@ public:
         views.add(editor_scroll,"editor");views.add(reading_scroll,"reading");
         reading_view.set_buffer(reading_buffer);reading_view.set_editable(false);reading_view.set_cursor_visible(true);
         reading_view.signal_size_allocate().connect([this](Gtk::Allocation&) {
+            resize_reading_images();
             if(reading_scroll_pending) scroll_reading_caret();
         });
         reading_view.set_wrap_mode(Gtk::WRAP_WORD_CHAR);reading_view.set_left_margin(12);reading_view.set_right_margin(12);reading_scroll.add(reading_view);
         reading_scroll.set_policy(Gtk::POLICY_AUTOMATIC,Gtk::POLICY_AUTOMATIC);
-        for(auto name:{"h1","h2","h3","h4","h5","h6","em","strong","code","codeblock","quote","url","link","unresolved","rule","strike","task","done","table","th"}) reading_tags[name]=reading_buffer->create_tag(name);
+        for(auto name:{"h1","h2","h3","h4","h5","h6","em","strong","code","codeblock","quote","url","link","unresolved","rule","strike","task","done","table","th","highlight","callout-note","callout-tip","callout-warning","callout-danger","callout-question","callout-quote","callout-title","folded","image","embed"}) reading_tags[name]=reading_buffer->create_tag(name);
         for(int i=1;i<=6;++i) {auto tag=reading_tags["h"+std::to_string(i)];tag->property_weight()=Pango::WEIGHT_BOLD;tag->property_scale()=1.7-0.1*i;}
+        reading_tags["highlight"]->property_background()="#FFE066";
+        reading_tags["callout-note"]->property_background()="#E3EEFB";
+        reading_tags["callout-tip"]->property_background()="#E2F5E7";
+        reading_tags["callout-warning"]->property_background()="#FFF1D6";
+        reading_tags["callout-danger"]->property_background()="#FBE2E2";
+        reading_tags["callout-question"]->property_background()="#EFE6FA";
+        reading_tags["callout-quote"]->property_background()="#EEEEEE";
+        reading_tags["callout-title"]->property_weight()=Pango::WEIGHT_BOLD;
+        reading_tags["folded"]->property_invisible()=true;
         reading_tags["strike"]->property_strikethrough()=true;
         reading_tags["done"]->property_strikethrough()=true;reading_tags["done"]->property_foreground()="#666666";
         reading_tags["task"]->property_foreground()="#205ca8";
@@ -752,6 +911,8 @@ public:
         reading_tags["em"]->property_style()=Pango::STYLE_ITALIC;
         reading_tags["strong"]->property_weight()=Pango::WEIGHT_BOLD;
         for(auto name:{"code","codeblock"}) {reading_tags[name]->property_family()="monospace";reading_tags[name]->property_background()="#eeeeea";}
+        for(auto name:{"code","codeblock","highlight"})
+            reading_tags[name]->set_priority(reading_buffer->get_tag_table()->get_size()-1);
         reading_tags["quote"]->property_left_margin()=36;reading_tags["quote"]->property_foreground()="#666666";
         reading_tags["rule"]->property_foreground()="#666666";
         for(auto name:{"url","link","unresolved"}) {reading_tags[name]->property_underline()=Pango::UNDERLINE_SINGLE;reading_tags[name]->property_foreground()=std::string(name)=="unresolved"?"#a33b24":"#205ca8";}
@@ -759,6 +920,17 @@ public:
             if(event->button!=1 || (event->state&(GDK_SHIFT_MASK|GDK_CONTROL_MASK|GDK_MOD1_MASK))) return false;
             int x,y;reading_view.window_to_buffer_coords(reading_view.get_window_type(Glib::wrap(event->window,true)),event->x,event->y,x,y);
             Gtk::TextBuffer::iterator at;int trailing;reading_view.get_iter_at_position(at,trailing,x,y);
+            int clicked=at.get_offset()+trailing;
+            for(auto& title:rendered.spans) if(title.style=="callout-title"&&title.start<=clicked&&clicked<=title.end) {
+                size_t index=0;
+                for(auto& fold:rendered.spans) if(fold.style=="folded") {
+                    if(fold.start==title.end) {
+                        fold_closed[index]=!fold_closed[index];update_folds();
+                        reading_buffer->place_cursor(reading_buffer->get_iter_at_offset(clicked));return true;
+                    }
+                    ++index;
+                }
+            }
             // A click past the line's text must not follow the last link on it.
             Gdk::Rectangle rect;reading_view.get_iter_location(at,rect);
             if(x<rect.get_x()||x>=rect.get_x()+rect.get_width()||y<rect.get_y()||y>=rect.get_y()+rect.get_height()) return false;

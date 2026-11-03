@@ -9,16 +9,16 @@ repair links, and a clean reading view. It has a classic menubar, a notes tree a
 the window manager's own title bar. There are no accounts, no network access, no
 telemetry and no AI features.
 
-Version 0.7.0. Apache License 2.0.
+Version 0.8.0. Apache License 2.0.
 
 ## Download and install (LCOS 1.0)
 
-Download `lcos-notes_0.7.0_amd64.deb` from the
+Download `lcos-notes_0.8.0_amd64.deb` from the
 [latest release](https://github.com/leebase/lcos-notes/releases/latest), then:
 
 ```sh
 sudo apt update
-sudo apt install ./lcos-notes_0.7.0_amd64.deb
+sudo apt install ./lcos-notes_0.8.0_amd64.deb
 ```
 
 Run `sudo apt update` first on a fresh LCOS install: it ships without package lists,
@@ -88,7 +88,7 @@ To install system-wide, use `meson setup build --prefix=/usr`, then
 To build a `.deb` for the machine you are on (no root needed; `dpkg-dev` required):
 
 ```sh
-packaging/build-deb.sh ~/out      # writes ~/out/lcos-notes_0.7.0_<arch>.deb
+packaging/build-deb.sh ~/out      # writes ~/out/lcos-notes_0.8.0_<arch>.deb
 ```
 
 ## Tests
