@@ -7,6 +7,9 @@
 #include <iostream>
 #include <map>
 #include <set>
+#include <sys/inotify.h>
+#include <unistd.h>
+#include <array>
 using namespace notes;
 class Window : public Gtk::Window {
     Vault vault;
@@ -48,8 +51,118 @@ class Window : public Gtk::Window {
     Glib::RefPtr<Gtk::ListStore> backlink_store=Gtk::ListStore::create(columns);
     Glib::RefPtr<Gtk::ListStore> mention_store=Gtk::ListStore::create(columns);
     bool loading=false;
+    int notify_fd=-1;
+    sigc::connection notify_connection, external_pending;
+    std::map<int,std::string> watches;
+    using DiskState=std::map<std::string,std::array<long long,6>>;
+    DiskState disk_state;
+    DiskState scan_disk() {
+        DiskState state;
+        auto paths=vault.files();auto dirs=vault.directories();paths.insert(paths.end(),dirs.begin(),dirs.end());
+        for(auto& path:paths) {
+            struct stat st{};if(lstat((vault.root/path).c_str(),&st)!=0) continue;
+            state[path]=S_ISDIR(st.st_mode)?std::array<long long,6>{st.st_ino,0,0,0,0,0}:std::array<long long,6>{st.st_ino,st.st_size,st.st_mtim.tv_sec,st.st_mtim.tv_nsec,st.st_ctim.tv_sec,st.st_ctim.tv_nsec};
+        }
+        return state;
+    }
+    void watch_directories() {
+        if(notify_fd<0) return;
+        std::set<std::string> dirs{std::string{}};
+        for(auto& p:vault.directories()) dirs.insert(p);
+        for(auto it=watches.begin();it!=watches.end();) {
+            if(!dirs.count(it->second)) {inotify_rm_watch(notify_fd,it->first);it=watches.erase(it);} else ++it;
+        }
+        for(auto& dir:dirs) {
+            bool exists=false;for(auto& w:watches) if(w.second==dir) exists=true;
+            if(exists) continue;
+            int id=inotify_add_watch(notify_fd,(vault.root/dir).c_str(),IN_CREATE|IN_DELETE|IN_MOVED_FROM|IN_MOVED_TO|IN_MODIFY|IN_CLOSE_WRITE|IN_ATTRIB|IN_DELETE_SELF|IN_MOVE_SELF);
+            if(id>=0) watches[id]=dir;
+        }
+    }
+    // Snapshot only following events or app operations, never on a polling timer.
+    void own_changes(const std::vector<std::string>& paths={}) {
+        auto updated=paths;if(updated.empty()&&!document.path.empty()) updated.push_back(document.path);
+        for(auto path:updated) {
+            struct stat st{};
+            if(lstat((vault.root/path).c_str(),&st)==0)
+                disk_state[path]=S_ISDIR(st.st_mode)?std::array<long long,6>{st.st_ino,0,0,0,0,0}:std::array<long long,6>{st.st_ino,st.st_size,st.st_mtim.tv_sec,st.st_mtim.tv_nsec,st.st_ctim.tv_sec,st.st_ctim.tv_nsec};
+            else disk_state.erase(path);
+            for(auto parent=fs::path(path).parent_path();!parent.empty();parent=parent.parent_path()) {
+                if(lstat((vault.root/parent).c_str(),&st)==0&&S_ISDIR(st.st_mode)) disk_state[parent.generic_string()]={st.st_ino,0,0,0,0,0};
+            }
+        }
+        watch_directories();
+    }
+    void reload_disk() {
+        if(document.path.empty()) return;
+        auto at=buffer->get_iter_at_mark(buffer->get_insert());int line=at.get_line(),col=at.get_line_offset();
+        try {
+            Document next;next.load(vault,document.path);document=next;
+            loading=true;buffer->begin_not_undoable_action();buffer->set_text(document.text);buffer->end_not_undoable_action();buffer->set_modified(false);loading=false;
+            line=std::min(line,buffer->get_line_count()-1);at=buffer->get_iter_at_line(line);
+            int length=0;if(!at.ends_line()) {auto end=at;end.forward_to_line_end();length=end.get_line_offset();}
+            at.forward_chars(std::min(col,length));buffer->place_cursor(at);editor.scroll_to(at,0.1);
+            refresh_u2(nullptr,true);if(reading) refresh_reading();update_title();message("Reloaded: changed on disk");
+        } catch(const std::exception& e) {loading=false;message(std::string("refused: ")+e.what());}
+    }
+    bool external_changes() {
+        auto current=scan_disk();watch_directories();
+        // An external writer may replace the open file between our save and
+        // recording its directory state; the Document stamp remains authoritative.
+        if(current==disk_state&&(document.path.empty()||!document.changed(vault))) return false;
+        disk_state=std::move(current);
+        refresh_tree(true);refresh_u2(nullptr,true);
+        if(!document.path.empty()&&document.changed(vault)) {
+            std::error_code ec;
+            if(!fs::exists(vault.root/document.path,ec)) {
+                document.mark_deleted();buffer->set_modified(true);update_title();message("Deleted on disk");
+            } else if(dirty()) message("Changed on disk; your unsaved edits are kept");
+            else reload_disk();
+        } else if(reading) {
+            int offset=reading_buffer->get_iter_at_mark(reading_buffer->get_insert()).get_offset();
+            refresh_reading();reading_buffer->place_cursor(reading_buffer->get_iter_at_offset(std::min(offset,reading_buffer->get_char_count())));
+        }
+        return false;
+    }
+    void start_monitoring() {
+        notify_fd=inotify_init1(IN_NONBLOCK|IN_CLOEXEC);if(notify_fd<0) {message("Cannot monitor vault");return;}
+        disk_state=scan_disk();watch_directories();
+        notify_connection=Glib::signal_io().connect([this](Glib::IOCondition) {
+            alignas(inotify_event) char bytes[32768];bool relevant=false;ssize_t size;
+            while((size=::read(notify_fd,bytes,sizeof bytes))>0) {
+                for(char* p=bytes;p<bytes+size;) {
+                    auto event=reinterpret_cast<inotify_event*>(p);
+                    if(event->mask&IN_IGNORED) watches.erase(event->wd);
+                    else {
+                        if(event->mask&(IN_MOVE_SELF|IN_DELETE_SELF)) {
+                            inotify_rm_watch(notify_fd,event->wd);watches.erase(event->wd);
+                        }
+                        if(!event->len||event->name[0]!='.') relevant=true;
+                    }
+                    p+=sizeof(inotify_event)+event->len;
+                }
+            }
+            if(relevant&&!external_pending.connected()) external_pending=Glib::signal_timeout().connect([this]{external_pending.disconnect();return external_changes();},150);
+            return true;
+        },notify_fd,Glib::IO_IN);
+    }
+    bool toggle_task(int offset) {
+        for(auto t:rendered.tasks) if(t.offset==offset) {
+            auto caret=buffer->get_iter_at_mark(buffer->get_insert()).get_offset();
+            // GTK also treats U+2029 as a line break. Parser line numbers cannot
+            // address its buffer; convert the original byte position to characters.
+            auto text=value();
+            auto marker=buffer->get_iter_at_offset(g_utf8_pointer_to_offset(text.data(),text.data()+t.source_offset));
+            auto end=marker;end.forward_char();buffer->begin_user_action();
+            marker=buffer->erase(marker,end);buffer->insert(marker,t.checked?" ":"x");buffer->end_user_action();
+            buffer->place_cursor(buffer->get_iter_at_offset(caret));
+            refresh_reading();reading_buffer->place_cursor(reading_buffer->get_iter_at_offset(offset));
+            reading_view.grab_focus();save();return true;
+        }
+        return false;
+    }
     std::string value() {return buffer->get_text().raw();}
-    bool dirty() {return !document.path.empty() && value()!=document.text;}
+    bool dirty() {return !document.path.empty() && (document.deleted()||value()!=document.text);}
     void message(const std::string& s) {status.pop();status.push(s);}
     void update_title() {
         auto name=document.path.empty()?vault.root.filename().string():fs::path(document.path).filename().string();
@@ -112,10 +225,23 @@ class Window : public Gtk::Window {
     }
     bool save() {
         if(document.path.empty()) return true;
-        try {document.save(vault,value());refresh_u2();update_title();position();return true;}
+        try {
+            bool wrote=dirty(),restoring=document.deleted();document.save(vault,value());
+            if(wrote) own_changes();
+            if(restoring) refresh_tree(true);
+            refresh_u2();update_title();position();return true;
+        }
         catch(const std::exception& e) {message(e.what());return false;}
     }
-    void refresh_tree() {
+    void refresh_tree(bool preserve=false) {
+        std::set<std::string> expanded;std::string selected;
+        auto selection=tree.get_selection()->get_selected();if(selection) selected=Glib::ustring((*selection)[columns.path]).raw();
+        std::function<void(const Gtk::TreeModel::Children&)> capture=[&](const Gtk::TreeModel::Children& children) {
+            for(auto row=children.begin();row!=children.end();++row) {
+                if(tree.row_expanded(store->get_path(row))) expanded.insert(Glib::ustring((*row)[columns.path]).raw());
+                capture(row->children());
+            }
+        };if(preserve) capture(store->children());
         store->clear(); std::map<std::string,Gtk::TreeModel::iterator> folders;
         for(auto& path:vault.directories()) {
             auto parent=folders.find(fs::path(path).parent_path().generic_string());
@@ -130,7 +256,17 @@ class Window : public Gtk::Window {
             auto row=parent==folders.end()?store->append():store->append(parent->second->children());
             (*row)[columns.label]=fs::path(path).filename().string(); (*row)[columns.path]=path;
         }
-        tree.expand_all();select_note();
+        if(!preserve) {tree.expand_all();select_note();}
+        else {
+            std::function<void(const Gtk::TreeModel::Children&)> restore=[&](const Gtk::TreeModel::Children& children) {
+                for(auto row=children.begin();row!=children.end();++row) {
+                    auto path=Glib::ustring((*row)[columns.path]).raw();auto index=store->get_path(row);
+                    if(expanded.count(path)) tree.expand_row(index,false);
+                    if(path==selected) tree.set_cursor(index);
+                    restore(row->children());
+                }
+            };restore(store->children());
+        }
     }
     void select_note() {
         std::function<bool(const Gtk::TreeModel::Children&)> visit;
@@ -155,8 +291,8 @@ class Window : public Gtk::Window {
             buffer->apply_tag(l.resolved?resolved_tag:unresolved_tag,buffer->get_iter_at_offset(l.offset),buffer->get_iter_at_offset(l.offset+l.length));
         }} catch(const std::exception& e) {message(e.what());}
     }
-    void refresh_u2(const Rename* tag_rename=nullptr) {
-        select_note();
+    void refresh_u2(const Rename* tag_rename=nullptr,bool preserve_tree=false) {
+        if(!preserve_tree) select_note();
         // Saved row identities are folded already, so prefix lengths remain
         // correct even when Unicode folding expands the displayed spelling.
         auto identity=[&](const Glib::ustring& tag) {
@@ -285,8 +421,16 @@ class Window : public Gtk::Window {
             int offset=buffer->get_iter_at_mark(buffer->get_insert()).get_offset();
             auto current=document.path;
             try {
-                document.save(vault,value());update_title();
+                bool wrote=dirty();document.save(vault,value());if(wrote) own_changes();update_title();
                 auto result=tag?vault.retag(old,entry.get_text().raw()):vault.rename(old,entry.get_text().raw());
+                std::vector<std::string> affected=result.updated;
+                if(!tag) {
+                    affected.push_back(old);affected.push_back(result.to);
+                    for(auto& entry:disk_state) if(entry.first.compare(0,old.size()+1,old+"/")==0) {
+                        affected.push_back(entry.first);affected.push_back(result.to+entry.first.substr(old.size()));
+                    }
+                }
+                own_changes(affected);
                 if(result.note_rewrites.count(current)) {
                     Rename mapping;mapping.rewrites=result.note_rewrites.at(current);offset=mapping.map_caret(offset);
                 }
@@ -304,6 +448,7 @@ class Window : public Gtk::Window {
         focus_content();
     }
     void open_created(const std::pair<std::string,bool>& created,const Maybe& heading={}) {
+        if(created.second) own_changes({created.first});
         if(created.second&&reading) toggle_reading();
         refresh_tree();
         if(open_note(created.first,heading)&&created.second) {
@@ -459,12 +604,16 @@ class Window : public Gtk::Window {
         return true;
     }
     bool key(GdkEventKey* event) {
+        if(reading&&reading_view.has_focus()&&event->keyval==GDK_KEY_space&&!(event->state&(GDK_CONTROL_MASK|GDK_MOD1_MASK))) {
+            toggle_task(reading_buffer->get_iter_at_mark(reading_buffer->get_insert()).get_offset());return true;
+        }
         bool ctrl=event->state&GDK_CONTROL_MASK,alt=event->state&GDK_MOD1_MASK;
         bool shift=event->state&GDK_SHIFT_MASK;
         if(!ctrl&&!alt&&(event->keyval==GDK_KEY_Up||event->keyval==GDK_KEY_Down||event->keyval==GDK_KEY_Left||event->keyval==GDK_KEY_Right)) {
             if(tags_tree.has_focus()) return sidebar_arrow(tags_tree,tag_store,event->keyval);
             if(tree.has_focus()) return sidebar_arrow(tree,store,event->keyval);
         }
+        if(ctrl&&shift&&(event->keyval==GDK_KEY_r||event->keyval==GDK_KEY_R)) {reload_disk();return true;}
         if(event->keyval==GDK_KEY_F2) {rename_dialog(true);return true;}
         if(ctrl&&shift&&(event->keyval==GDK_KEY_e||event->keyval==GDK_KEY_E)) {focus_sidebar(false);return true;}
         if(ctrl&&shift&&(event->keyval==GDK_KEY_t||event->keyval==GDK_KEY_T)) {focus_sidebar(true);return true;}
@@ -509,6 +658,7 @@ protected:
         return dialog.run()!=Gtk::RESPONSE_REJECT;
     }
 public:
+    ~Window() override {notify_connection.disconnect();external_pending.disconnect();if(notify_fd>=0) ::close(notify_fd);}
     Window(const fs::path& root,const std::string& note):vault(root) {
         // Select the monitor at the pointer before mapping, then refine using the
         // actual WM frame once decorations have been installed.
@@ -541,7 +691,7 @@ public:
             },100);
             return false;
         });
-        menu("_File",{{"New Note… (Ctrl+N)",[this]{new_note();}},{"Quick Switcher (Ctrl+O)",[this]{switcher();}},{"Save (Ctrl+S)",[this]{if(!reading) save();}},{"_Rename… (F2)",[this]{rename_dialog();}},{"_Quit",[this]{close();}}});
+        menu("_File",{{"New Note… (Ctrl+N)",[this]{new_note();}},{"Quick Switcher (Ctrl+O)",[this]{switcher();}},{"Save (Ctrl+S)",[this]{if(!reading) save();}},{"Reload from Disk (Ctrl+Shift+R)",[this]{reload_disk();}},{"_Rename… (F2)",[this]{rename_dialog();}},{"_Quit",[this]{close();}}});
         menu("_Edit",{{"_Undo",[this]{if(!reading&&buffer->can_undo()) buffer->undo();}},{"_Redo",[this]{if(!reading&&buffer->can_redo()) buffer->redo();}},{"Cu_t",[this]{if(!reading) buffer->cut_clipboard(Gtk::Clipboard::get());}},{"_Copy",[this]{if(reading) reading_buffer->copy_clipboard(Gtk::Clipboard::get());else buffer->copy_clipboard(Gtk::Clipboard::get());}},{"_Paste",[this]{if(!reading) buffer->paste_clipboard(Gtk::Clipboard::get());}}});
         menu("_View",{{"Focus _Editor",[this]{focus_content();}}});
         auto view_item=dynamic_cast<Gtk::MenuItem*>(menubar.get_children().back());
@@ -553,7 +703,7 @@ public:
             {"Search Notes… (Ctrl+Shift+F)",[this]{search_dialog();}},{"Backlinks (Ctrl+Shift+B)",[this]{focus_backlinks();}},
             {"Notes (Ctrl+Shift+E)",[this]{focus_sidebar(false);}},{"Tags (Ctrl+Shift+T)",[this]{focus_sidebar(true);}},
             {"Unlinked Mentions (Ctrl+Shift+M)",[this]{focus_backlinks(true);}}});
-        menu("_Help",{{"_About",[this]{Gtk::AboutDialog dialog;dialog.set_transient_for(*this);dialog.set_program_name("LCOS Notes");dialog.set_version("0.6.0");dialog.set_copyright("Copyright 2026 Lee Harrington");dialog.set_license_type(Gtk::LICENSE_CUSTOM);dialog.set_wrap_license(true);dialog.set_license("Licensed under the Apache License, Version 2.0 (the \"License\"); you may not use this program except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.");dialog.set_comments("Offline Markdown notes for LCOS and X11 desktops. Apache-2.0.");dialog.run();}}});
+        menu("_Help",{{"_About",[this]{Gtk::AboutDialog dialog;dialog.set_transient_for(*this);dialog.set_program_name("LCOS Notes");dialog.set_version("0.7.0");dialog.set_copyright("Copyright 2026 Lee Harrington");dialog.set_license_type(Gtk::LICENSE_CUSTOM);dialog.set_wrap_license(true);dialog.set_license("Licensed under the Apache License, Version 2.0 (the \"License\"); you may not use this program except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.");dialog.set_comments("Offline Markdown notes for LCOS and X11 desktops. Apache-2.0.");dialog.run();}}});
         layout.pack_start(menubar,Gtk::PACK_SHRINK);layout.pack_start(panes);layout.pack_end(status,Gtk::PACK_SHRINK);
         tree.set_model(store);tree.append_column("Notes",columns.label);tree.set_headers_visible(false);
         tree_scroll.add(tree);tree_scroll.set_policy(Gtk::POLICY_AUTOMATIC,Gtk::POLICY_AUTOMATIC);
@@ -591,8 +741,14 @@ public:
         });
         reading_view.set_wrap_mode(Gtk::WRAP_WORD_CHAR);reading_view.set_left_margin(12);reading_view.set_right_margin(12);reading_scroll.add(reading_view);
         reading_scroll.set_policy(Gtk::POLICY_AUTOMATIC,Gtk::POLICY_AUTOMATIC);
-        for(auto name:{"h1","h2","h3","h4","h5","h6","em","strong","code","codeblock","quote","url","link","unresolved","rule"}) reading_tags[name]=reading_buffer->create_tag(name);
+        for(auto name:{"h1","h2","h3","h4","h5","h6","em","strong","code","codeblock","quote","url","link","unresolved","rule","strike","task","done","table","th"}) reading_tags[name]=reading_buffer->create_tag(name);
         for(int i=1;i<=6;++i) {auto tag=reading_tags["h"+std::to_string(i)];tag->property_weight()=Pango::WEIGHT_BOLD;tag->property_scale()=1.7-0.1*i;}
+        reading_tags["strike"]->property_strikethrough()=true;
+        reading_tags["done"]->property_strikethrough()=true;reading_tags["done"]->property_foreground()="#666666";
+        reading_tags["task"]->property_foreground()="#205ca8";
+        reading_tags["task"]->property_weight()=Pango::WEIGHT_BOLD;
+        reading_tags["task"]->property_scale()=1.3;
+        reading_tags["table"]->property_family()="monospace";reading_tags["th"]->property_weight()=Pango::WEIGHT_BOLD;
         reading_tags["em"]->property_style()=Pango::STYLE_ITALIC;
         reading_tags["strong"]->property_weight()=Pango::WEIGHT_BOLD;
         for(auto name:{"code","codeblock"}) {reading_tags[name]->property_family()="monospace";reading_tags[name]->property_background()="#eeeeea";}
@@ -606,6 +762,7 @@ public:
             // A click past the line's text must not follow the last link on it.
             Gdk::Rectangle rect;reading_view.get_iter_location(at,rect);
             if(x<rect.get_x()||x>=rect.get_x()+rect.get_width()||y<rect.get_y()||y>=rect.get_y()+rect.get_height()) return false;
+            if(toggle_task(at.get_offset())) return true;
             for(auto& l:rendered.links) if(l.start<=at.get_offset()&&at.get_offset()<l.end) {follow_reading(at.get_offset());return true;}
             return false;
         },false);
@@ -625,6 +782,7 @@ public:
         },false);
         refresh_tree();refresh_u2();show_all_children();views.set_visible_child("editor");update_title();position();
         if(!note.empty()) {editor.set_sensitive(true);open_note(note);}
+        start_monitoring();
         auto config=fs::path(Glib::get_user_config_dir())/"lcos-notes";
         fs::create_directories(config);std::ofstream(config/"last-vault")<<vault.root.string()<<'\n';
     }

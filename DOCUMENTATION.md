@@ -1,4 +1,4 @@
-This guide covers version 0.6.0. The exact rules behind each feature are in
+This guide covers version 0.7.0. The exact rules behind each feature are in
 [CONTRACT.md](CONTRACT.md).
 
 ## Vaults and notes
@@ -238,6 +238,7 @@ lcos-notes-cli backlinks VAULT NOTE
 lcos-notes-cli rename    VAULT OLD NEW
 lcos-notes-cli render    VAULT NOTE            # reading-view text, styles, links
 lcos-notes-cli blocks    VAULT NOTE            # reading-view block positions
+lcos-notes-cli tasks     VAULT NOTE            # task markers and reading-view offsets
 ```
 
 `man lcos-notes` and `man lcos-notes-cli` have the same reference offline.
@@ -247,12 +248,43 @@ lcos-notes-cli blocks    VAULT NOTE            # reading-view block positions
 These are not supported yet:
 - Markdown links with titles and reference-style note links;
 - following images or non-local links, and NFC normalization in search;
-- tables, task lists and strikethrough in the reading view;
+- task items inside block quotes (not recognized by the supported parser);
 - showing embedded notes and images or viewing attachments;
-- reloading notes changed by other programs;
 - a settings dialog, daily notes, a graph view and multiple windows.
 
 Package publishing and signing are also unsupported.
 
 The Go menu exposes Quick Switcher, Follow Link, Search Notes, Backlinks, Notes,
 Tags and Unlinked Mentions, with their keyboard shortcuts.
+
+
+## Tables, tasks and strikethrough
+
+GitHub-flavored Markdown tables render with aligned, padded columns and a bold
+header in reading view. `~~text~~` renders with strikethrough; single tildes stay
+literal. Task lists use `- [ ]` for open items and `- [x]` (or `[X]`) for completed
+items; ordered lists also support tasks. Task items inside a block quote are not
+recognized by the supported parser.
+
+In reading view, put the caret on a task box and press Space, or click the box,
+to toggle it. Only the marker character changes. The whole buffer is then saved
+as with Ctrl+S, including any unsaved edits. If saving is refused because the file
+changed on disk, the toggled buffer stays available. Space elsewhere does nothing.
+The CLI command `tasks VAULT NOTE` reports each task's source line, code point
+column, checked state and reading-view box offset.
+
+## Files changed by another program
+
+A clean open note reloads within two seconds after an external change. The editor
+caret keeps its line and column, clamped to the new text; reloading clears Undo.
+Reading view follows the editor position. Unsaved edits are kept instead, with a
+status message. File > Reload from Disk (Ctrl+Shift+R) explicitly replaces the
+buffer with the file's text, discarding unsaved edits without confirmation.
+Invalid UTF-8 is refused and the buffer is kept.
+
+If the open file is deleted or renamed externally, its buffer becomes modified
+and the status says `Deleted on disk`. Ctrl+S restores it at the original path,
+unless another file has appeared there. External changes also refresh Notes,
+Tags, Backlinks and Unlinked mentions within two seconds, preserving existing
+folder expansion, selection and Tags state. The app's own writes do not trigger
+external reloads.

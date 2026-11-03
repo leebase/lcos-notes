@@ -303,13 +303,19 @@ struct FD {
     ~FD(){close(n);}
     FD(const FD&)=delete; FD& operator=(const FD&)=delete;
 };
-static int parent_fd(const Vault& v,const std::string& path) {
+static int parent_fd(const Vault& v,const std::string& path,std::vector<fs::path>* made=nullptr) {
     int fd=open(v.root.c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC);
     if(fd<0) fail("cannot open vault");
+    fs::path relative;
     for(auto& part:fs::path(path).parent_path()) {
-        auto s=part.string();
+        auto s=part.string();relative/=part;
         if(s.empty()||s[0]=='.') {close(fd);fail("unsafe directory");}
         int next=openat(fd,s.c_str(),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+        if(next<0&&errno==ENOENT&&made) {
+            if(mkdirat(fd,s.c_str(),0777)==0) made->push_back(v.root/relative);
+            else if(errno!=EEXIST) {close(fd);fail("cannot restore note directory");}
+            next=openat(fd,s.c_str(),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+        }
         close(fd); if(next<0) fail("unsafe or missing directory"); fd=next;
     }
     return fd;
@@ -374,16 +380,29 @@ void Document::load(const Vault& vault,const std::string& relative) {
     auto bytes=read_fd(file.n);
     if(fstat(file.n,&after)!=0 || !same(before,after)) fail("note changed while loading");
     if(!g_utf8_validate(bytes.data(),bytes.size(),nullptr)) fail("note is not UTF-8 text");
-    stamp=after; original=bytes; text=bytes; path=relative;
+    missing=false; stamp=after; original=bytes; text=bytes; path=relative;
+}
+bool Document::changed(const Vault& vault) const {
+    struct stat current{};
+    if(lstat((vault.root/path).c_str(),&current)!=0) return !missing;
+    return missing||!same(current,stamp);
 }
 void Document::save(const Vault& vault,const std::string& contents) {
-    if(contents==original) {text=contents;return;}
-    FD dir(parent_fd(vault,path)); auto name=fs::path(path).filename().string();
+    if(contents==original&&!missing) {text=contents;return;}
+    // Recover a deleted note even if its containing folder was removed or moved.
+    // Only this recovery path creates parents; existing paths still use no-follow
+    // directory descriptors. Remove newly made empty directories on refusal.
+    struct Recovery {
+        std::vector<fs::path> made;
+        bool saved=false;
+        ~Recovery() {if(!saved) for(auto it=made.rbegin();it!=made.rend();++it) {std::error_code ec;fs::remove(*it,ec);}}
+    } recovery;
+    FD dir(parent_fd(vault,path,missing?&recovery.made:nullptr)); auto name=fs::path(path).filename().string();
     auto unchanged=[&]() {
         int n=openat(dir.n,name.c_str(),O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
-        if(n<0) return false;
+        if(n<0) return missing&&errno==ENOENT;
         FD file(n); struct stat st{};
-        return fstat(file.n,&st)==0 && same(st,stamp) && read_fd(file.n)==original;
+        return !missing && fstat(file.n,&st)==0 && same(st,stamp) && read_fd(file.n)==original;
     };
     if(!unchanged()) fail("Changed on disk; not saved");
     std::string temp;
@@ -407,7 +426,7 @@ void Document::save(const Vault& vault,const std::string& contents) {
         if(!unchanged()) fail("Changed on disk; not saved");
         if(renameat(dir.n,temp.c_str(),dir.n,name.c_str())!=0) fail("cannot replace note");
         fstat(file.n,&stamp); fsync(dir.n);
-        original=contents; text=contents;
+        missing=false; original=contents; text=contents;recovery.saved=true;
     } catch(...) {unlinkat(dir.n,temp.c_str(),0);throw;}
 }
 int heading_offset(const std::string& text,const std::string& heading) {

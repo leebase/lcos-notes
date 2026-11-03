@@ -677,10 +677,126 @@ version, read `0.6.0`; the metainfo keeps its earlier release entries and adds 0
   drops what U6 delivers, and it describes New Note (Ctrl+N) and the switcher's
   `Create` row. The CLI man page documents `retag`, `mentions` and the `find` options.
 
+## U7: GitHub-flavored Markdown, task checkboxes, reloading changed files
+
+U7 adds these to U1–U6; everything above stays in force except where a rule below replaces
+it. The project version is `0.7.0` (wherever U6 names `0.6.0` as the project or package
+version, read `0.7.0`; the metainfo keeps its earlier release entries and adds 0.7.0).
+
+### Parser
+
+- The Markdown parser is the system cmark-gfm (`libcmark-gfm` and
+  `libcmark-gfm-extensions`, pkg-config version >= 0.29.0; the reference and the supported
+  LCOS build use 0.29.0.gfm.13, Devuan Excalibur's). It replaces cmark everywhere U3–U6
+  say "cmark": the program no longer links `libcmark`. Every parse attaches exactly the
+  `table`, `tasklist` and `strikethrough` extensions with the option
+  `CMARK_OPT_STRIKETHROUGH_DOUBLE_TILDE` and no other option (no autolinks, footnotes or
+  tag filter). Wikilink placeholders, frontmatter removal and every U3–U6 rendering rule
+  are unchanged; a document with no table, task item or `~~` renders exactly as in U6.
+- Because wikilinks are replaced by placeholders before parsing, a `|` inside a wikilink
+  (`[[Note|alias]]`) never splits a table cell.
+
+### Rendering the extensions
+
+These extend U3's block and inline rules (`text`, `spans`, `links`, `blocks`):
+
+- **Strikethrough.** `~~text~~` → its content, span `strike`. A single `~` is literal.
+- **Task items.** An item is a task item exactly when cmark-gfm's `tasklist` extension
+  makes it one (for example `- [ ] a`, `* [x] b`, `3. [X] c`; in 0.29.0.gfm.13 not inside
+  a block quote). Its *marker* is the first `[` on the item's start line at or after the
+  item's start column (cmark byte column), with the next two characters. The item is
+  *checked* when the character after that `[` is `x` or `X` — not cmark-gfm's own checked
+  flag, which 0.29.0.gfm.13 also sets when `[x]` occurs later on the line.
+  - In a bullet list the item prefix is `☐ ` (U+2610 and a space) when unchecked or `☑ `
+    (U+2611 and a space) when checked, instead of `• `. In an ordered list it is `N. ☐ `
+    or `N) ☑ ` (U3's number and delimiter, then the box). Indentation of later lines uses
+    the prefix's code point count, as in U3.
+  - Span `task` covers the box character. For a checked item, span `done` covers the
+    rendering of the item's first child block (after the prefix).
+- **Tables.** A table renders as one line per row: the header row, then a rule line, then
+  each body row, joined by `\n`. Every row has the header's number of cells (cmark-gfm adds
+  empty cells and drops extra ones). A cell's text is its inlines rendered by U3's inline
+  rules. Column *width* is the largest cell text length in that column (code points), at
+  least 1. Each cell is padded with spaces to the width by its column's alignment: right
+  (`--:`) pads on the left; center (`:-:`) puts half the padding (rounded down) on the
+  left and the rest on the right; left or none pads on the right. Cells are joined by
+  ` │ ` (space, U+2502, space). The rule line is, per column, width × `─` (U+2500), joined
+  by `─┼─` (U+2500 U+253C U+2500). Spans and links inside a cell move with its text.
+  Span `th` covers each header cell's text (not its padding); span `table` covers the
+  whole table.
+- **blocks.** A table is listed like any block, and so is each table row (the header row
+  and each body row; the rule line has none); a row's `offset` is the start of its line in
+  `text`. Table cells are not listed. U6's rule still drops an entry whose `line` equals
+  the previous entry's `line`. Task items are list items (offset at the prefix start).
+- `tasks VAULT NOTE` (CLI) lists the note's task items in document order as
+  `[{"line", "col", "checked", "offset"}]`: `line` and `col` are the 1-based line of the
+  note's file and code point column of the marker's `[`; `checked` as defined above;
+  `offset` is the code point offset of the box character in the rendered `text`. A note
+  that is not valid UTF-8 is exit 2 `refused: <reason>`.
+
+### Reading view
+
+- Styles: `strike` is struck through; `task` is shown in the U2 link color (#205ca8);
+  `done` is struck through and dimmed; `table` is monospace; `th` is bold.
+- **Toggling a task.** In reading view, Space while the caret is on a box (`offset <=
+  caret < offset + 1`), or a plain left click on a box, toggles that task: in the buffer the
+  character after the marker's `[` becomes `x` if it was a space, or a space if it was `x`
+  or `X`; nothing else in the buffer changes. Then the note is saved exactly as Ctrl+S
+  saves it (U1, including the `Changed on disk; not saved` refusal, which keeps the
+  toggled buffer). The reading view shows the new rendering with the caret at the same
+  offset and keeps keyboard focus. This is the one edit reading view makes; every other
+  U3 read-only rule stands. Space elsewhere in reading view does nothing.
+
+### Reloading files changed on disk
+
+"Changed by another program" means any change to the vault on disk not made by this app
+instance; the app's own saves, creations and renames never count and never trigger
+anything below.
+
+- **The open note.** When the open note's file is changed by another program and the
+  buffer has no unsaved changes, the app reloads it within 2 seconds: the buffer becomes
+  the file's new text, unmodified, and Undo cannot bring back the old text. The editor
+  caret keeps its line and column (1-based, code points), clamped to the last line and that
+  line's length; in reading view the reading caret is placed from it by U4's rule. The
+  statusbar shows `Reloaded: changed on disk`. A file that is no longer valid UTF-8 is not
+  loaded: the buffer is kept and the statusbar shows the U1 open refusal.
+- With unsaved changes the buffer is kept and the statusbar shows
+  `Changed on disk; your unsaved edits are kept`. **File > Reload from Disk**
+  (Ctrl+Shift+R) replaces the buffer with the file's text (unmodified, no confirmation,
+  caret kept as above), whether or not the buffer was modified; it is how a user leaves the
+  U1 `Changed on disk; not saved` state.
+- When the open note's file is deleted or renamed by another program, the buffer is kept
+  and becomes modified, and the statusbar shows `Deleted on disk`. Ctrl+S then writes it
+  back at its path (U1's changed-on-disk check now expects no file there, so it refuses
+  only if a file has appeared at that path since).
+- **The vault.** When another program creates, deletes, renames or changes a note,
+  attachment or folder in the vault, within 2 seconds the notes tree, the Tags tab, the
+  Backlinks pane and the Unlinked mentions list show the new state, as they would after
+  reopening the vault. The Tags tab keeps its state by U6's rules, and the notes tree keeps
+  its expanded folders and selection the same way (a folder or file row that still exists
+  stays expanded or selected).
+
+### Install and package
+
+The build dependencies name the `-dev` packages of cmark-gfm and its extensions
+(`libcmark-gfm-dev`, `libcmark-gfm-extensions-dev` on Debian-family hosts) instead of
+cmark's. The package's `Depends`, still from `dpkg-shlibdeps`, therefore names the
+cmark-gfm libraries (on Devuan Excalibur `libcmark-gfm0.29.0.gfm.13` and
+`libcmark-gfm-extensions0.29.0.gfm.13`) and no longer `libcmark0.30.2`.
+
+### User documentation
+
+README.md states `Version 0.7.0.` and names the libraries `apt` fetches (the two cmark-gfm
+libraries) and the new build dependencies. DOCUMENTATION.md begins
+`This guide covers version 0.7.0.` and documents tables, task lists and toggling them in
+reading view (Space or click), strikethrough, reloading changed files, File > Reload from
+Disk (Ctrl+Shift+R) and the `tasks` command; its "Not supported yet" list drops what U7
+delivers and mentions that task items inside block quotes are not recognized. The CLI man
+page documents `tasks`.
+
 ## Out of scope (tracked in `BACKLOG.md`)
 
 Markdown links with titles, reference-style links, NFC in search (U5 covers inline
-Markdown note links, block references and NFC names), file watching, attachments viewing, settings dialog,
+Markdown note links, block references and NFC names), attachments viewing, settings dialog,
 daily notes, graph view, multiple windows. Also out of scope from U3: following images and non-local links, embedding
-(transcluding) notes, GitHub-flavored Markdown extensions (tables, task lists,
-strikethrough), rendering attachments, repository publishing and signing of packages.
+(transcluding) notes, GFM autolinks and footnotes, rendering attachments, repository publishing and signing of packages.

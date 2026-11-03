@@ -13,9 +13,14 @@ static std::string fields(const Link& l) {
 }
 int main(int argc,char** argv) {
     try {
-        if(argc<3) throw std::runtime_error("usage: lcos-notes-cli notes|links|mdlinks|resolve|switch|create|tags|tagged|find|backlinks|mentions|retag|rename|render|blocks VAULT [arguments]");
+        if(argc<3) throw std::runtime_error("usage: lcos-notes-cli notes|links|mdlinks|resolve|switch|create|tags|tagged|find|backlinks|mentions|retag|rename|render|blocks|tasks VAULT [arguments]");
         std::string command=argv[1],out; Vault vault(argv[2]);
         if(command=="notes" && argc==3) out=array(vault.notes());
+        else if(command=="tasks" && argc==4) {
+            Document doc;doc.load(vault,argv[3]);auto r=vault.render(doc.path,doc.text);out="[";
+            for(auto& t:r.tasks) {if(out.size()>1) out+=",";out+="{\"line\":"+std::to_string(t.line)+",\"col\":"+std::to_string(t.col)+",\"checked\":"+(t.checked?"true":"false")+",\"offset\":"+std::to_string(t.offset)+"}";}
+            out+="]";
+        }
         else if(command=="blocks" && argc==4) {
             Document doc;doc.load(vault,argv[3]);auto r=vault.render(doc.path,doc.text);
             out="[";

@@ -1,4 +1,4 @@
-.TH LCOS-NOTES-CLI 1 "November 2026" "LCOS Notes 0.6.0" "User Commands"
+.TH LCOS-NOTES-CLI 1 "November 2026" "LCOS Notes 0.7.0" "User Commands"
 .SH NAME
 lcos-notes-cli \- query and modify a local Markdown vault
 .SH SYNOPSIS
@@ -66,16 +66,23 @@ Refuse existing destinations, a folder moved inside itself, symlinks under
 moved folders and invalid UTF-8 notes under them. Refusals write nothing.
 .TP
 .B render VAULT NOTE
-Render CommonMark with text, style spans and followable note links. Offsets are zero-based
+Render GitHub-flavored Markdown with text, style spans and followable note links. Offsets are zero-based
 Unicode code points; ranges exclude their end. Frontmatter and trailing paragraph block IDs are omitted; ranges are clipped.
 .TP
 .B blocks VAULT NOTE
-List CommonMark blocks in preorder, including list items and quote children,
+List Markdown blocks in preorder, including list items and quote children,
 excluding document and list nodes; consecutive duplicate start lines are omitted.
 Return blocks as objects with line and offset. The line is
 1-based in the original file, including removed frontmatter. The offset is a
 0-based Unicode code point position in the same text returned by render.
 Invalid UTF-8 notes are refused.
+
+.TP
+.B tasks VAULT NOTE
+List task items as JSON with source line, code point col, checked state and
+reading-view box offset. Requires a valid UTF-8 note. GFM tables, task lists and
+double-tilde strikethrough are rendered by the shared core.
+
 .SH LINK RULES
 Markdown paths resolve relative to the source folder, then the vault root,
 trying each path with and without an appended .md. A leading slash uses only
@@ -90,8 +97,8 @@ Unsafe creation targets and invalid note paths are refused. Invalid UTF-8 notes
 are ignored by search, tags and backlinks and refused by render and rename.
 .SH UNSUPPORTED
 Markdown links with titles or reference syntax, following images and external
-links, transclusion, attachment viewing, file watching, NFC search, settings,
-daily notes, graph view, multiple windows, GFM extensions, package publishing
+links, transclusion, attachment viewing, NFC search, settings,
+daily notes, graph view, multiple windows, GFM autolinks and footnotes, package publishing
 and signing are outside the supported scope.
 .SH SEE ALSO
 .BR lcos-notes (1)

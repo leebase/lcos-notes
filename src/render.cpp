@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Lee Harrington
 #include "core.hpp"
-#include <cmark.h>
+#include <cmark-gfm.h>
+#include <cmark-gfm-core-extensions.h>
 #include <glib.h>
 #include <algorithm>
 #include <map>
@@ -16,15 +17,42 @@ int count(const std::string& s) { return g_utf8_strlen(s.data(), s.size()); }
 std::string utf8(gunichar c) { char b[6]; auto n=g_unichar_to_utf8(c,b);return std::string(b,n); }
 void append(Render& out, Render part) {
     int offset=count(out.text);out.text+=part.text;
+    for(auto t:part.tasks) {t.offset+=offset;out.tasks.push_back(t);}
     for(auto b:part.blocks) {b.offset+=offset;out.blocks.push_back(b);}
     for(auto s:part.spans) {s.start+=offset;s.end+=offset;out.spans.push_back(s);}
     for(auto l:part.links) {l.start+=offset;l.end+=offset;out.links.push_back(l);}
 }
 void style(Render& r,const std::string& name) {r.spans.push_back({0,count(r.text),name});}
 std::string literal(cmark_node* n) {auto s=cmark_node_get_literal(n);return s?s:"";}
+// cmark recognizes LF, CRLF and lone CR, but not Unicode paragraph separators.
+std::vector<size_t> line_starts(const std::string& text) {
+    std::vector<size_t> starts{0};
+    for(size_t i=0;i<text.size();++i) {
+        if(text[i]=='\r') {
+            if(i+1<text.size()&&text[i+1]=='\n') ++i;
+            starts.push_back(i+1);
+        } else if(text[i]=='\n') starts.push_back(i+1);
+    }
+    return starts;
+}
 struct Renderer {
     std::map<gunichar,Link> tokens;
     std::string source_name;
+    std::string source, parsed;
+    std::vector<size_t> source_lines, parsed_lines, source_offsets;
+    int removed=0, parser_removed=0;
+    Task task(cmark_node* item) const {
+        int body_line=cmark_node_get_start_line(item);
+        int line=body_line+parser_removed;
+        auto start=parsed_lines.at(line-1);
+        auto end=line<int(parsed_lines.size())?parsed_lines[line]:parsed.size();
+        auto pos=parsed.find('[',start+std::max(0,cmark_node_get_start_column(item)-1));
+        if(pos==std::string::npos||pos+2>=end) throw std::runtime_error("cannot locate task marker");
+        auto original=source_offsets.at(pos);
+        auto source_line=std::upper_bound(source_lines.begin(),source_lines.end(),original)-source_lines.begin();
+        return {body_line+removed,count(source.substr(source_lines[source_line-1],original-source_lines[source_line-1]))+1,
+                source[original+1]=='x'||source[original+1]=='X',0,original+1};
+    }
     Render expand(const std::string& text,bool raw) const {
         Render r;
         for(const char* p=text.data();p<text.data()+text.size();p=g_utf8_next_char(p)) {
@@ -67,6 +95,7 @@ struct Renderer {
         case CMARK_NODE_HTML_INLINE:return expand(literal(n),true);
         default:r=inlines(n);break;
         }
+        if(std::string(cmark_node_get_type_string(n))=="strikethrough") style(r,"strike");
         if(type==CMARK_NODE_EMPH) style(r,"em");
         if(type==CMARK_NODE_STRONG) style(r,"strong");
         if(type==CMARK_NODE_LINK||type==CMARK_NODE_IMAGE) style(r,"url");
@@ -94,6 +123,7 @@ struct Renderer {
         int width=count(prefix);
         auto start=[&](int o) {return o+width*(std::upper_bound(inserts.begin(),inserts.end(),o)-inserts.begin());};
         auto end=[&](int o) {return o+width*(std::lower_bound(inserts.begin(),inserts.end(),o)-inserts.begin());};
+        for(auto& t:r.tasks) t.offset=start(t.offset);
         for(auto& b:r.blocks) b.offset=start(b.offset);
         for(auto& s:r.spans) {s.start=start(s.start);s.end=end(s.end);}
         for(auto& l:r.links) {l.start=start(l.start);l.end=end(l.end);}
@@ -107,6 +137,38 @@ struct Renderer {
     }
     Render block_contents(cmark_node* n) const {
         Render r;auto type=cmark_node_get_type(n);
+        if(std::string(cmark_node_get_type_string(n))=="table") {
+            std::vector<std::vector<Render>> rows;
+            std::vector<int> widths(cmark_gfm_extensions_get_table_columns(n),1);
+            for(auto row=cmark_node_first_child(n);row;row=cmark_node_next(row)) {
+                std::vector<Render> cells;size_t col=0;
+                for(auto cell=cmark_node_first_child(row);cell;cell=cmark_node_next(cell),++col) {
+                    auto part=inlines(cell);widths.at(col)=std::max(widths.at(col),count(part.text));cells.push_back(std::move(part));
+                }
+                rows.push_back(std::move(cells));
+            }
+            auto align=cmark_gfm_extensions_get_table_alignments(n);size_t index=0;
+            for(auto row=cmark_node_first_child(n);row;row=cmark_node_next(row),++index) {
+                if(index) r.text+='\n';
+                r.blocks.push_back({cmark_node_get_start_line(row),count(r.text)});
+                for(size_t col=0;col<widths.size();++col) {
+                    if(col) r.text+=" │ ";
+                    auto part=rows[index][col];int pad=widths[col]-count(part.text);
+                    int left=align[col]=='r'?pad:align[col]=='c'?pad/2:0;
+                    r.text+=std::string(left,' ');
+                    if(!index) style(part,"th");
+                    append(r,std::move(part));r.text+=std::string(pad-left,' ');
+                }
+                if(!index) {
+                    r.text+='\n';
+                    for(size_t col=0;col<widths.size();++col) {
+                        if(col) r.text+="─┼─";
+                        for(int i=0;i<widths[col];++i) r.text+="─";
+                    }
+                }
+            }
+            style(r,"table");return r;
+        }
         switch(type) {
         case CMARK_NODE_PARAGRAPH: {
             r=inlines(n);
@@ -145,7 +207,22 @@ struct Renderer {
             for(auto item=cmark_node_first_child(n);item;item=cmark_node_next(item),++index) {
                 auto prefix=cmark_node_get_list_type(n)==CMARK_ORDERED_LIST?
                     std::to_string(index)+(cmark_node_get_list_delim(n)==CMARK_PAREN_DELIM?") ":". "):"• ";
-                auto part=indent(blocks(item,cmark_node_get_list_tight(n)?"\n":"\n\n"),prefix);
+                bool is_task=std::string(cmark_node_get_type_string(item))=="tasklist";
+                Task record{};
+                if(is_task) {record=task(item);prefix=cmark_node_get_list_type(n)==CMARK_ORDERED_LIST?prefix:"";prefix+=record.checked?"☑ ":"☐ ";}
+                Render children;bool first_child=true;
+                for(auto child=cmark_node_first_child(item);child;child=cmark_node_next(child)) {
+                    if(!first_child) children.text+=cmark_node_get_list_tight(n)?"\n":"\n\n";
+                    auto content=block(child);
+                    if(first_child&&is_task&&record.checked) style(content,"done");
+                    append(children,std::move(content));first_child=false;
+                }
+                auto part=indent(std::move(children),prefix);
+                if(is_task) {
+                    record.offset=count(prefix)-2;
+                    part.spans.push_back({record.offset,record.offset+1,"task"});
+                    part.tasks.insert(part.tasks.begin(),record);
+                }
                 part.blocks.insert(part.blocks.begin(),{cmark_node_get_start_line(item),0});
                 if(!first) r.text+='\n';
                 first=false;append(r,std::move(part));
@@ -172,6 +249,12 @@ Render Vault::render(const std::string& source,const std::string& text) const {
     if(!g_utf8_validate(text.data(),text.size(),nullptr)) throw std::runtime_error("note is not UTF-8 text");
     Renderer renderer;renderer.source_name=fs::path(source).stem().string();
     auto found=all_links(source,text);std::string replaced;size_t cursor=0;
+    // Keep parser byte coordinates tied to the original bytes even when a link
+    // is replaced by a private-use token of a different encoded length.
+    auto copy=[&](size_t end) {
+        replaced.append(text,cursor,end-cursor);
+        for(;cursor<end;++cursor) renderer.source_offsets.push_back(cursor);
+    };
     // Allocate ordinary Unicode private-use characters absent from the input,
     // so literal Unicode in arbitrary documents never becomes an accidental link.
     std::set<gunichar> used;
@@ -196,14 +279,27 @@ Render Vault::render(const std::string& source,const std::string& text) const {
         while(used.count(token)||token==0xFFFFE||token==0xFFFFF) ++token;
         if(token>0x10FFFD) throw std::runtime_error("too many wikilinks to render");
         auto byte=size_t(g_utf8_offset_to_pointer(text.data(),l.offset)-text.data());
-        replaced+=text.substr(cursor,byte-cursor);replaced+=utf8(token);
+        copy(byte);auto placeholder=utf8(token);replaced+=placeholder;
+        for(size_t i=0;i<placeholder.size();++i) renderer.source_offsets.push_back(byte);
         renderer.tokens.emplace(token++,l);cursor=byte+l.raw.size();
     }
-    replaced+=text.substr(cursor);
+    copy(text.size());renderer.source_offsets.push_back(text.size());
     auto start=body_start(replaced);
+    // Public coordinates inherit the LF-based frontmatter grammar. Parser
+    // lookup must also count lone CRs, without adding them to reported lines.
     int removed=std::count(replaced.begin(),replaced.begin()+start,'\n');
     auto body=replaced.substr(start);
-    std::unique_ptr<cmark_node,decltype(&cmark_node_free)> doc(cmark_parse_document(body.data(),body.size(),0),cmark_node_free);
+    renderer.removed=removed;
+    renderer.parser_removed=line_starts(replaced.substr(0,start)).size()-1;
+    renderer.source=text;renderer.parsed=replaced;
+    renderer.source_lines=line_starts(text);renderer.parsed_lines=line_starts(replaced);
+    cmark_gfm_core_extensions_ensure_registered();
+    auto parser=cmark_parser_new(CMARK_OPT_STRIKETHROUGH_DOUBLE_TILDE);
+    for(auto name:{"table","tasklist","strikethrough"})
+        cmark_parser_attach_syntax_extension(parser,cmark_find_syntax_extension(name));
+    cmark_parser_feed(parser,body.data(),body.size());
+    std::unique_ptr<cmark_node,decltype(&cmark_node_free)> doc(cmark_parser_finish(parser),cmark_node_free);
+    cmark_parser_free(parser);
     if(!doc) throw std::runtime_error("cannot parse Markdown");
     Render result=renderer.blocks(doc.get(),"\n\n");
     std::vector<Block> positions;

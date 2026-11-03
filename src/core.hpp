@@ -48,7 +48,12 @@ struct Rename {
 struct Span { int start, end; std::string style; };
 struct RenderLink { int start, end; std::string raw; Maybe resolved; };
 struct Block { int line, offset; };
-struct Render { std::string text; std::vector<Span> spans; std::vector<RenderLink> links; std::vector<Block> blocks; };
+struct Task {
+    int line, col; bool checked; int offset;
+    // Byte offset of the character after '[' in the original, unmodified source.
+    size_t source_offset = 0;
+};
+struct Render { std::string text; std::vector<Span> spans; std::vector<RenderLink> links; std::vector<Block> blocks; std::vector<Task> tasks; };
 class Vault {
 public:
     fs::path root;
@@ -75,8 +80,12 @@ public:
 class Document {
     struct stat stamp{};
     std::string original;
+    bool missing=false;
 public:
     std::string path, text;
+    bool deleted() const {return missing;}
+    void mark_deleted() {missing=true;}
+    bool changed(const Vault& vault) const;
     void load(const Vault& vault, const std::string& relative);
     void save(const Vault& vault, const std::string& contents);
 };

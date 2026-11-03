@@ -12,7 +12,7 @@ import pytest
 from harness import XSession, copy_vault, title, work_dir
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.6.0"                                          # CONTRACT.md U4-U6
+VERSION = "0.7.0"                                          # CONTRACT.md U4-U7
 APP = "com.leebase.LcosNotes"
 INSTALLED = {
     "usr/bin/lcos-notes", "usr/bin/lcos-notes-cli",
@@ -68,8 +68,11 @@ def test_control_fields(deb):
     desc = _field(deb, "Description").split("\n")
     assert desc[0].strip() and len(desc) >= 2 and all(line.startswith(" ") for line in desc[1:])
     depends = [d.strip().split(" ")[0] for d in _field(deb, "Depends").split(",")]
-    for prefix in ("libc6", "libgtkmm-3.0-1", "libgtksourceviewmm-3.0-0", "libcmark0.30"):
+    # CONTRACT.md U7: cmark-gfm and its extensions replace cmark.
+    for prefix in ("libc6", "libgtkmm-3.0-1", "libgtksourceviewmm-3.0-0", "libcmark-gfm0.29.0",
+                   "libcmark-gfm-extensions0.29.0"):
         assert any(d.startswith(prefix) for d in depends), (prefix, depends)
+    assert not any(d.startswith("libcmark0") for d in depends), depends
 
 
 def test_contents_owners_and_modes(deb):

@@ -304,14 +304,13 @@ def test_mentions_match_reference(tmp_path, seed):
 
 
 def test_user_docs_cover_u6():
-    """README and DOCUMENTATION.md describe 0.6.0; a fresh LCOS install needs apt update first."""
+    """README and DOCUMENTATION.md cover U6; a fresh LCOS install needs apt update first.
+    (The version strings are the current unit's: test_u7_core.)"""
     root = __import__("pathlib").Path(__file__).resolve().parents[1]
     readme = (root / "README.md").read_text()
-    update, install = readme.find("sudo apt update\n"), readme.find("sudo apt install ./lcos-notes_0.6.0_amd64.deb")
+    update, install = readme.find("sudo apt update\n"), readme.find("sudo apt install ./lcos-notes_")
     assert 0 <= update < install
-    assert "Version 0.6.0." in readme
     guide = (root / "DOCUMENTATION.md").read_text()
-    assert "This guide covers version 0.6.0." in guide
     for term in ("retag", "--regex", "--word", "mentions", "Ctrl+Shift+E", "Ctrl+Shift+T", "Ctrl+Shift+M",
                  "Unlinked mentions", "Whole word", "Regular expression", "Ctrl+N", "Create"):
         assert term in guide, term
