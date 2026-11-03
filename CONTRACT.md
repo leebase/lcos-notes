@@ -517,6 +517,166 @@ so a note saved by macOS in decomposed form resolves and ranks like its composed
 Paths written to disk keep the bytes the user or link gave them. Search (U2/U4) and
 display text are unchanged.
 
+## U6: tags, search options, folder and attachment rename, unlinked mentions
+
+U6 adds these to U1–U5; everything above stays in force except where a rule below replaces
+it. The project version is `0.6.0` (wherever U5 names `0.5.0` as the project or package
+version, read `0.6.0`; the metainfo keeps its earlier release entries and adds 0.6.0).
+
+### Tags
+
+- Frontmatter: a line starting (column 1) with `tag:` declares tags exactly as `tags:`
+  does (all three forms). Other YAML forms stay ignored.
+- Parent tags: `tags` also lists every ancestor of a nested tag (`a/b/c` lists `a/b` and
+  `a`) even if it never occurs on its own. A tag's `count` is the number of notes that
+  contain it or any tag nested under it (`a` counts notes with `a`, `a/b`, `a/b/c`...).
+  An ancestor that never occurs on its own takes its display form from the display form
+  of the first tag (by U2's display order) nested under it, cut at that level. Ordering
+  is unchanged (folded tag, then display form). The GUI Tags tab shows the same list.
+- Renaming a tag: `retag VAULT OLD NEW` (a leading `#` is ignored in both; both must be
+  valid tags) rewrites, in every note, every inline occurrence and every frontmatter item
+  whose tag equals OLD or is nested under it (compared after folding), replacing the OLD
+  prefix by NEW and keeping the rest (`#old/x` → `#new/x`). Only the tag text changes:
+  `#`, quotes, list punctuation and all other bytes are kept; notes without a change are
+  not written; changed notes use the U1 atomic save. Output
+  `{"from": OLD, "to": NEW, "updated": [paths, sorted]}` (OLD and NEW without a leading `#`,
+  as given otherwise). Refused (exit 2, nothing
+  written): OLD or NEW invalid, OLD occurs nowhere, or NEW is nested under OLD.
+- GUI: F2 while the Tags tab has focus on a tag row opens a Rename Tag dialog with the
+  tag's display form selected; Enter saves the open note first (a refused save refuses
+  the rename), renames, reloads the open note if it changed (caret kept as U4's rename
+  rule would, using the rewritten tags), refreshes the Tags tab and puts keyboard focus
+  back in the editor (or reading view). A refusal shows
+  `Rename refused: <reason>` in the statusbar. Escape cancels.
+
+### Search options
+
+- `find VAULT QUERY [--regex] [--word]` (options in any order after QUERY). `--regex`:
+  QUERY is a GLib regular expression (PCRE syntax) matched case-insensitively against each
+  line's text (U4 lines); an invalid expression is exit 2 `refused: <reason>`; empty matches
+  are skipped; matches are non-overlapping, left to right. `--word`: a match counts only if
+  the character before it and the character after it (if any) are not letters, digits or
+  `_` (`g_unichar_isalnum`); a rejected candidate consumes nothing and the next attempt
+  starts one character after its start (plain or regex). Accepted matches do not overlap;
+  the next attempt starts at the end of an accepted match (one character later for an
+  empty regex match, which is itself never reported). Columns, ordering and the 500 cap are
+  as in U2, and options never change the plain-query rules (case-insensitive by
+  per-code-point lowering, U4 line bounds).
+- GUI: the Search dialog has two check buttons, `Regular expression` (Alt+R) and
+  `Whole word` (Alt+W), off when the dialog opens; toggling them updates the results. An
+  invalid expression shows no results and the dialog's statusbar-like label
+  `Invalid expression`.
+
+### Renaming folders and attachments
+
+- `rename VAULT OLD NEW` also accepts OLD naming a non-hidden directory or an attachment
+  (a non-note vault file). For a directory, NEW is the new directory path (creation's
+  segment rules, no `.md` handling) and every file under OLD moves with it; for an
+  attachment, NEW is its new vault path including any extension (it may have none;
+  Q291). The U2 rename invariant
+  holds for every moved file (links that resolved to a moved file resolve to its new
+  path; unresolved links stay byte-identical; only links that would break are rewritten,
+  in their own syntax: U2 for wikilinks, U5 for Markdown links). Refused as in U2, plus:
+  NEW inside OLD, NEW exists (after folding, for any path), OLD is the vault root, or any
+  file under OLD is a symlink or not UTF-8 when it is a note. Output as U2 with `updated`
+  listing changed notes by their final paths.
+- GUI: the notes tree also lists attachments (non-note vault files) under their folders,
+  after the notes. Activating an attachment shows `Not a note: <path>`. F2 while the tree
+  has focus renames the selected row (note, folder or attachment) through the same dialog
+  (prefilled with its path without `.md` for notes, the full path otherwise). Enter saves
+  the open note first (a refused save refuses the rename), renames, refreshes tree, tags
+  and backlinks, and reopens the open note at its final path (it may have moved or had
+  links rewritten) with the caret kept by U4's rule and keyboard focus back in the editor
+  (or reading view); a refusal shows
+  `Rename refused: <reason>` and changes nothing.
+
+### Keyboard access to the sidebar
+
+- Ctrl+Shift+E shows the Notes tab and focuses the notes tree with the open note's row
+  selected (the first row when no note is open). Ctrl+Shift+T shows the Tags tab and focuses
+  the tag list with the first row selected. Arrow keys move the selection; Enter activates
+  the selected row as a double-click does; F2 renames as above.
+
+### Unlinked mentions
+
+- `mentions VAULT NOTE` lists occurrences of NOTE's file name without `.md` in other
+  notes' prose (U2 mask, outside frontmatter, not inside a wikilink or Markdown note link),
+  matched case-insensitively (U2 search lowering, per code point) as a whole word (the
+  `--word` rule), in every other note that is valid UTF-8, whether or not it also links to
+  NOTE. Occurrences are found left to right without overlap; a candidate that is rejected
+  (not a whole word, or not all prose) consumes nothing and the search goes on one
+  character after its start. `text` is the line's text
+  (U4). Output `[{"source", "line", "col", "text"}]` ordered by source path (byte order),
+  line, column. NOTE must be a note (exit 2 otherwise); a NOTE that is not UTF-8 has none.
+- GUI: under the Backlinks list, a second list `Unlinked mentions` (same columns)
+  refreshed with the backlinks; Enter or double-click opens the source at the mention.
+  Ctrl+Shift+M focuses it with the first row selected.
+
+### Usability (from testing 0.5.0 on a real LCOS 1.0 install)
+
+- **New Note.** The File menu's first item is `New Note… (Ctrl+N)`. Ctrl+N works in the
+  editor and in reading view. It opens a modal `New Note` dialog with the label
+  `Name or path, for example Projects/Idea`, an entry, and `Cancel` and `Create` buttons;
+  `Create` is the default (Enter), Escape cancels. Create saves the open note first (a
+  refused save refuses the creation and keeps the dialog's text out of the vault), then
+  treats the text exactly as the quick switcher's create does (U1): if it already resolves
+  to a note, that note opens and nothing is created; a refusal shows the U1 creation
+  refusal in the statusbar.
+- **Quick switcher.** Above the entry a label reads
+  `Open a note by name or path. Ctrl+Shift+F searches note contents.` When the query is
+  not empty and does not already resolve to a note (U1's creation check), the result list
+  ends with one extra row `Create "QUERY"` (QUERY as typed). It is selectable like any
+  row; activating it creates and opens the note exactly as U1's Enter-with-no-match does.
+  With no matching notes it is the only row and is selected, so Enter still creates.
+  Enter on a matching note still opens that note.
+- **New notes open for writing.** Whenever the app creates a note (New Note, the
+  switcher's create, following a link to a missing note from the editor or from reading
+  view), it leaves reading view if it was on (the mode stays off for later notes, U4),
+  puts the editor caret at the end of the new note and gives the editor keyboard focus,
+  so typing goes straight into the note. Opening an existing note keeps U4's sticky mode.
+- **Menus show every command.** The Go menu lists `Quick Switcher (Ctrl+O)`,
+  `Follow Link (Alt+Enter)`, `Search Notes… (Ctrl+Shift+F)`, `Backlinks (Ctrl+Shift+B)`,
+  `Notes (Ctrl+Shift+E)`, `Tags (Ctrl+Shift+T)` and `Unlinked Mentions (Ctrl+Shift+M)`,
+  each doing what its key does. The View menu's `Reading View (Ctrl+E)` is a check item
+  that is checked exactly while reading view is on.
+- **Dialog buttons.** Every rename dialog (note, tree row, tag) has `Cancel` and `Rename`
+  buttons; `Rename` is the default (Enter) and Escape cancels, as before.
+- **The Tags tab keeps its state.** When the Tags tab is refreshed (opening, saving,
+  creating or renaming notes, retag), every tag row that was expanded and whose tag still
+  exists (compared after folding) stays expanded, and the selected row stays selected if
+  the same tag row, or the same note row under the same tag, still exists.
+- **A tag rename keeps the renamed rows' state** (from Lee's 0.6.0 retest, B11). After
+  a tag rename from the Tags tab, a row that was expanded or selected and whose tag was OLD
+  or nested under OLD (compared after folding) counts as the row of the tag with the OLD
+  prefix replaced by NEW (`old/x` becomes `new/x`), so it stays expanded, or selected,
+  when that tag exists after the rename. All other rows keep their state by the rule above,
+  and the rename still puts keyboard focus back in the editor (or reading view).
+- **Reading-view positions reach list items.** This replaces U4's definition of `blocks`
+  (the reading-caret rule itself is unchanged: the last block whose `line` is less than or
+  equal to the editor caret's line). `blocks VAULT NOTE` lists, in pre-order of cmark's
+  tree, every block node except the document and list nodes: top-level blocks, list items
+  at any depth, and the blocks inside list items and block quotes. Each entry's `line` is
+  the node's cmark start line plus the frontmatter lines removed, and `offset` is where the
+  node's rendering starts in `text`: for a list item, the start of its prefix (`• `,
+  `N. `, `N) `); for a block inside an item, after the prefix or indentation. An entry
+  whose `line` equals the previous entry's `line` is dropped. So following a backlink
+  that points into a list lands on that list item in reading view.
+- **Block IDs are hidden in reading view.** When a paragraph's last inline is text that
+  ends with one or more spaces or tabs, `^` and one or more ASCII letters, digits or `-`
+  (a U5 block id), that ending is not rendered: `text` ends before it and spans and links
+  end at or before the new end. Everything else in the paragraph renders as before.
+
+### User documentation
+
+- README.md states `Version 0.6.0.` and its LCOS install steps run `sudo apt update`
+  before `sudo apt install ./lcos-notes_0.6.0_amd64.deb` (a fresh LCOS 1.0 install has no
+  package lists). DOCUMENTATION.md begins `This guide covers version 0.6.0.` and documents
+  every U6 feature: `retag`, `find` `--regex`/`--word`, folder and attachment rename,
+  `mentions`, the sidebar keys Ctrl+Shift+E/T/M, the Search dialog's `Regular expression`
+  and `Whole word` options and the `Unlinked mentions` list; its "Not supported yet" list
+  drops what U6 delivers, and it describes New Note (Ctrl+N) and the switcher's
+  `Create` row. The CLI man page documents `retag`, `mentions` and the `find` options.
+
 ## Out of scope (tracked in `BACKLOG.md`)
 
 Markdown links with titles, reference-style links, NFC in search (U5 covers inline

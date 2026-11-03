@@ -209,3 +209,55 @@ def markdown_links(vault, source: str, text: str, wikilinks: list) -> list:
     """Reference `mdlinks` output: parsed links with their resolution."""
     files = vault_files(vault)
     return [{**d, "resolved": resolve(files, source, d["path"])} for d in mdlinks(text, wikilinks)]
+
+
+def _low(s):
+    return "".join(c.lower() if len(c.lower()) == 1 else c for c in s)
+
+
+def _word(c):
+    return c.isalnum() or c == "_"
+
+
+def frontmatter_lines(text: str) -> int:
+    """Number of leading lines that are frontmatter (U2 definition)."""
+    lines = text.split("\n")
+    bare = [l[:-1] if l.endswith("\r") else l for l in lines]
+    if not bare or bare[0] != "---":
+        return 0
+    for i in range(1, len(bare)):
+        if bare[i] in ("---", "..."):
+            return i + 1
+    return 0
+
+
+def mentions(text: str, name: str, wikilinks: list, md: list) -> list:
+    """CONTRACT.md U6 unlinked mentions of `name` in one note: [(line, col, line_text)]."""
+    mask = prose(text)
+    lines = text.split("\n")
+    starts = [0]
+    for ln in lines[:-1]:
+        starts.append(starts[-1] + len(ln) + 1)
+    taken = set()
+    for l in list(wikilinks) + list(md):
+        a = starts[l["line"] - 1] + l["col"] - 1
+        taken.update(range(a, a + len(l["raw"])))
+    q, out = _low(name), []
+    for li in range(frontmatter_lines(text), len(lines)):
+        line = lines[li]
+        body = line[:-1] if line.endswith("\r") else line
+        low, i = _low(body), 0
+        while q and i + len(q) <= len(body):
+            at = low.find(q, i)
+            if at < 0:
+                break
+            end = at + len(q)
+            span = range(starts[li] + at, starts[li] + end)
+            ok = (at == 0 or not _word(body[at - 1])) and (end == len(body) or not _word(body[end])) \
+                and all(mask[p] and p not in taken for p in span)
+            if ok:
+                out.append((li + 1, at + 1, body))
+                i = end
+            else:
+                i = at + 1
+    return out

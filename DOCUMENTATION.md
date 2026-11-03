@@ -1,6 +1,4 @@
-# LCOS Notes user guide
-
-This guide covers version 0.5.0. The exact rules behind each feature are in
+This guide covers version 0.6.0. The exact rules behind each feature are in
 [CONTRACT.md](CONTRACT.md).
 
 ## Vaults and notes
@@ -97,13 +95,24 @@ Percent signs and path hashes are escaped; outside angle brackets, spaces and
 parentheses/angle brackets are escaped too. Unresolved links keep their exact bytes.
 Search still compares the original text without NFC normalization.
 
+## New Note (Ctrl+N)
+
+File > New Note… (Ctrl+N) opens a dialog with a name or vault path, such as
+Projects/Idea. Create (or Enter) saves the current note first; Cancel or Escape
+leaves it alone. An existing name opens that note. Unsafe paths are refused.
+Every newly created note, including one created by following a missing link or
+using the switcher, leaves reading view and focuses the editor at the end, ready
+to type. Opening an existing note keeps the current mode.
+
 ## Quick switcher (Ctrl+O)
 
 Type part of a note's name or path. The characters only need to appear in order, so
 `prjalp` finds `Projects/Alpha`. Exact names rank first, then names that start with
 what you typed, then names that contain it. **Up/Down** pick a result, **Enter**
 opens it, and **Escape** cancels. If nothing matches, **Enter** creates a note with
-the name you typed.
+the name you typed. A hint above the entry points to Ctrl+Shift+F for content
+search. A nonempty query that is not already a note adds a final selectable
+`Create "QUERY"` row, even when other notes match.
 
 ## Reading view (Ctrl+E)
 
@@ -111,10 +120,12 @@ the name you typed.
 read-only view of the note, including unsaved edits. Headings, bold, italic, code,
 quotes, lists and divider lines are formatted; frontmatter is hidden.
 
-- The view opens at the paragraph your editor caret was in.
+- The view opens at the block or list item your editor caret was in, including
+  nested lists and quotes. Trailing paragraph block IDs such as ` ^item-1` are hidden.
+- View > Reading View is checked while reading mode is on.
 - **Enter** on a link, or a plain **left click** on it, follows it (as Alt+Enter
   does). **Shift+click** selects text instead.
-- The mode sticks: notes you open stay in reading view until you press Ctrl+E again.
+- The mode sticks for existing notes: notes you open stay in reading view until you press Ctrl+E again.
   Switching back puts the editor caret where it was.
 - Typing, pasting, Ctrl+S and Undo do nothing while reading.
 
@@ -125,12 +136,27 @@ The pane on the right lists every link from other notes to the open note, as
 **Enter** or a double-click opens the linking note with the caret on the link. You
 can resize the columns and drag the pane's divider.
 
+### Unlinked mentions (Ctrl+Shift+M)
+
+Below Backlinks, Unlinked mentions lists whole-word occurrences of the open
+note's filename without `.md` in other notes. Matching ignores case using
+per-character lowering. It excludes frontmatter, fenced/inline code and both
+note-link syntaxes, including notes that also contain an actual link. Enter or
+double-click opens the source with the caret at the mention; Ctrl+Shift+M focuses
+the first row.
+
 ## Search (Ctrl+Shift+F)
 
 Type to search all notes. Search is case-insensitive and finds text anywhere,
 including code and frontmatter. A match never spans two lines. Results show as
 `path:line: text`; **Enter** opens the selected one with the caret on the match.
-Results stop at 500.
+Results stop at 500. Regular expression (Alt+R) uses case-insensitive GLib/PCRE
+syntax, per line; empty matches are skipped. Whole word (Alt+W) requires both
+boundaries to be outside letters, digits and underscores. A rejected candidate
+retries one character after its start; accepted matches do not overlap.
+Options reset to off each time the dialog opens. Invalid regex syntax clears the
+results and shows `Invalid expression`. CLI: `find VAULT QUERY [--regex] [--word]`;
+options follow QUERY in either order.
 
 ## Tags
 
@@ -144,9 +170,27 @@ tags: [project, inbox]
 ---
 ```
 
-The **Tags** tab lists every tag with the number of notes using it. Expand a tag to
+Both `tag:` and `tags:` accept flow lists, comma/whitespace-separated scalars,
+or indented `- item` lists. The **Tags** tab lists every tag and implicit ancestor
+with the number of notes containing it or any descendant. Display spelling uses
+the first explicit occurrence in vault/document order; an implicit ancestor uses
+the first descendant's prefix. Expand a tag to
 see its notes (nested tags included) and activate a note to open it. Tags are
-case-insensitive after NFC normalization.
+case-insensitive after NFC normalization. Expansion and selection survive refreshes
+when the same tag or note under that tag remains.
+
+F2 on a tag row opens Rename Tag. It saves first, replaces every matching prefix
+in inline and frontmatter tags, preserves quotes, punctuation, code and other
+bytes, reloads changed open text and preserves the caret. Focus returns to the
+editor or reading view. CLI: `retag VAULT OLD NEW` (optional leading `#`).
+Both tags must be valid; OLD must occur; NEW cannot be nested under OLD. Merges
+upward or into another tag are allowed. Refusals write nothing.
+
+## Sidebar keyboard access
+
+Ctrl+Shift+E shows Notes and selects the open note (first row if none).
+Ctrl+Shift+T shows Tags and selects its first row. Arrows navigate; Enter
+activates or expands a row; F2 renames the selected row.
 
 ## Renaming (F2)
 
@@ -159,7 +203,18 @@ such as `Archive/Old Ideas`, and press Enter. LCOS Notes then:
   notes that need no change are not touched;
 - keeps your caret on the same text.
 
-A rename is refused, and nothing changes, if the new name is already taken or a
+The Notes tree includes attachments after notes. F2 with tree focus renames the
+selected note, folder or attachment; folder destinations are complete directory
+paths and attachment destinations include any desired extension (or none).
+Every file under a moved folder moves with it, and links in both syntaxes retain
+their resolved file. The open note reloads at its final path with its caret on
+the same text and focus restored. Every rename dialog has Cancel and Rename;
+Rename is the default, and Escape cancels.
+
+A folder cannot move inside itself. Existing destinations, hidden or unsafe
+paths, symlinks under the source folder and invalid UTF-8 notes under it are
+refused. Extensionless attachment destinations are allowed when every link can
+still resolve correctly. A rename is refused, and nothing changes, if the new name is already taken or a
 link could not be kept pointing at the right note. The statusbar explains why.
 
 ## Command-line tool
@@ -176,9 +231,11 @@ lcos-notes-cli switch    VAULT QUERY           # quick-switcher results
 lcos-notes-cli create    VAULT 'Inbox/Today'
 lcos-notes-cli tags      VAULT
 lcos-notes-cli tagged    VAULT TAG
-lcos-notes-cli find      VAULT QUERY
+lcos-notes-cli retag     VAULT OLD NEW
+lcos-notes-cli mentions  VAULT NOTE
+lcos-notes-cli find      VAULT QUERY [--regex] [--word]
 lcos-notes-cli backlinks VAULT NOTE
-lcos-notes-cli rename    VAULT NOTE NEWNAME
+lcos-notes-cli rename    VAULT OLD NEW
 lcos-notes-cli render    VAULT NOTE            # reading-view text, styles, links
 lcos-notes-cli blocks    VAULT NOTE            # reading-view block positions
 ```
@@ -189,10 +246,13 @@ lcos-notes-cli blocks    VAULT NOTE            # reading-view block positions
 
 These are not supported yet:
 - Markdown links with titles and reference-style note links;
+- following images or non-local links, and NFC normalization in search;
 - tables, task lists and strikethrough in the reading view;
-- showing embedded notes and images;
+- showing embedded notes and images or viewing attachments;
 - reloading notes changed by other programs;
-- renaming folders;
 - a settings dialog, daily notes, a graph view and multiple windows.
 
-Several of these are in active development.
+Package publishing and signing are also unsupported.
+
+The Go menu exposes Quick Switcher, Follow Link, Search Notes, Backlinks, Notes,
+Tags and Unlinked Mentions, with their keyboard shortcuts.

@@ -1,4 +1,4 @@
-.TH LCOS-NOTES 1 "October 2026" "LCOS Notes 0.5.0" "User Commands"
+.TH LCOS-NOTES 1 "November 2026" "LCOS Notes 0.6.0" "User Commands"
 .SH NAME
 lcos-notes \- edit and read a local Markdown vault
 .SH SYNOPSIS
@@ -17,10 +17,32 @@ Ctrl+S saves; Ctrl+O opens the quick switcher; Alt+Enter follows a wikilink or M
 Ctrl+click follows an editor link. Ctrl+E toggles a read-only styled reading view
 of the current buffer. Enter or a plain left click follows a reading-view link. Shift+click extends
 selection; Ctrl/Alt+click do not follow. Reading has 12 px side margins and places
-its caret at the last rendered top-level block at or before the editor's line.
-Ctrl+Shift+F searches, Ctrl+Shift+B focuses backlinks, and F2 renames a note.
+its caret at the last rendered block or list item at or before the editor's line.
+Ctrl+N opens New Note with Cancel and Create buttons. The quick switcher adds a
+selectable Create row for a new name even when other notes match.
+Ctrl+Shift+F searches with Regular expression (Alt+R) and Whole word (Alt+W)
+options; an invalid pattern shows Invalid expression. Ctrl+Shift+B focuses
+backlinks and Ctrl+Shift+M focuses Unlinked mentions.
+Ctrl+Shift+E focuses Notes at the current note; Ctrl+Shift+T focuses Tags.
+Arrows navigate the sidebar, Enter activates and F2 renames the selected note,
+folder, attachment or tag. Rename dialogs provide Cancel and Rename buttons.
+Tag expansion and selection persist across refreshes.
 Opening a different note or closing saves pending edits. External changes block
-saving. Reading mode persists across note navigation.
+saving. Reading mode persists when opening existing notes. A newly created note leaves
+reading view and focuses the editor at its end. The View menu check item tracks
+reading mode. Trailing paragraph block IDs are hidden in reading view.
+The Go menu exposes all navigation commands and their keys.
+.SH TAGS AND MENTIONS
+Inline tags and frontmatter tag: or tags: declarations appear in Tags, including
+implicit parent tags whose counts include descendant notes. F2 on a tag renames
+its prefix throughout the vault while preserving other bytes.
+Unlinked mentions finds whole-word, case-insensitive occurrences of the current
+note's basename in other notes, excluding frontmatter, code and note links.
+.SH RENAME
+Folder and attachment renames preserve resolved destinations in both link
+syntaxes, leaving unresolved links unchanged. Attachments appear after notes
+in the tree and cannot be viewed. Renaming saves first, reloads the open note
+at its final path and preserves its caret and editing or reading mode.
 .SH LINKS
 Local inline Markdown links such as [plan](Note.md#Plan) resolve relative to the
 source folder, then the vault root. Leading slash means vault root. Missing

@@ -24,10 +24,13 @@ SUITES = {
     "guikeep": ["tests/test_u3_gui.py", "tests/test_u4_gui.py"],
     "u5core": ["tests/test_u5_core.py"],
     "u5gui": ["tests/test_u5_gui.py"],
+    "guikeep2": ["tests/test_u3_gui.py", "tests/test_u4_gui.py", "tests/test_u5_gui.py"],
+    "u6core": ["tests/test_u6_core.py"],
+    "u6gui": ["tests/test_u6_gui.py"],
     "acceptance": ["tests/test_core.py", "tests/test_gui.py", "tests/test_u2_core.py", "tests/test_u2_gui.py",
                    "tests/test_u3_core.py", "tests/test_u3_gui.py", "tests/test_u3_pkg.py",
                    "tests/test_u4_core.py", "tests/test_u4_gui.py", "tests/test_u4_pkg.py",
-                   "tests/test_u5_core.py", "tests/test_u5_gui.py"],
+                   "tests/test_u5_core.py", "tests/test_u5_gui.py", "tests/test_u6_core.py", "tests/test_u6_gui.py"],
 }
 
 if __name__ == "__main__":

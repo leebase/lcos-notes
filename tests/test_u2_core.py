@@ -40,7 +40,9 @@ def tag_vault(tmp_path):
 def test_tags_inline_frontmatter_display_and_counts(tag_vault):
     assert cli_json("tags", tag_vault) == [
         {"tag": "body1", "count": 1}, {"tag": "crlf", "count": 1}, {"tag": "duo", "count": 1},
-        {"tag": "Inbox", "count": 3}, {"tag": "Later", "count": 1}, {"tag": "nested/child", "count": 1},
+        {"tag": "Inbox", "count": 3}, {"tag": "Later", "count": 1},
+        {"tag": "nested", "count": 1},                         # U6: implicit parent tag
+        {"tag": "nested/child", "count": 1},
         {"tag": "Project", "count": 2}, {"tag": "real", "count": 1}, {"tag": "solo", "count": 1},
         {"tag": "three", "count": 1}, {"tag": "Work", "count": 2}, {"tag": "y2025", "count": 1},
         {"tag": "Ünï", "count": 1},
@@ -215,8 +217,8 @@ def test_rename_unchanged_notes_not_written(tmp_path):
     ("Café.md", "Projects/Sub/Ideas"),   # [[Ideas]] in Projects/Sub/Deep.md cannot keep its target
     ("Café.md", "Ideas"), ("Café.md", "projects/IDEAS"), ("Café.md", "README.txt"),
     ("Café.md", "../x"), ("Café.md", ".hidden/x"), ("Café.md", "a:b"),
-    ("Café.md", ""), ("Nope.md", "X"), ("Link.md", "X"), (".trash/Old.md", "X"), ("README.txt", "X"),
-])
+    ("Café.md", ""), ("Nope.md", "X"), ("Link.md", "X"), (".trash/Old.md", "X"),
+])                                       # ("README.txt", "X") moved to test_u6_core (Q291: attachments rename in U6)
 def test_rename_refusals_change_nothing(tmp_path, old, new):
     v = copy_vault(tmp_path / "v")
     (v / "README.txt.md").write_text("")  # makes "README.txt" an existing note path

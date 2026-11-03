@@ -16,6 +16,7 @@ int count(const std::string& s) { return g_utf8_strlen(s.data(), s.size()); }
 std::string utf8(gunichar c) { char b[6]; auto n=g_unichar_to_utf8(c,b);return std::string(b,n); }
 void append(Render& out, Render part) {
     int offset=count(out.text);out.text+=part.text;
+    for(auto b:part.blocks) {b.offset+=offset;out.blocks.push_back(b);}
     for(auto s:part.spans) {s.start+=offset;s.end+=offset;out.spans.push_back(s);}
     for(auto l:part.links) {l.start+=offset;l.end+=offset;out.links.push_back(l);}
 }
@@ -93,14 +94,41 @@ struct Renderer {
         int width=count(prefix);
         auto start=[&](int o) {return o+width*(std::upper_bound(inserts.begin(),inserts.end(),o)-inserts.begin());};
         auto end=[&](int o) {return o+width*(std::lower_bound(inserts.begin(),inserts.end(),o)-inserts.begin());};
+        for(auto& b:r.blocks) b.offset=start(b.offset);
         for(auto& s:r.spans) {s.start=start(s.start);s.end=end(s.end);}
         for(auto& l:r.links) {l.start=start(l.start);l.end=end(l.end);}
         r.text=std::move(text);return r;
     }
     Render block(cmark_node* n) const {
+        auto r=block_contents(n);
+        if(cmark_node_get_type(n)!=CMARK_NODE_LIST)
+            r.blocks.insert(r.blocks.begin(),{cmark_node_get_start_line(n),0});
+        return r;
+    }
+    Render block_contents(cmark_node* n) const {
         Render r;auto type=cmark_node_get_type(n);
         switch(type) {
-        case CMARK_NODE_PARAGRAPH:return inlines(n);
+        case CMARK_NODE_PARAGRAPH: {
+            r=inlines(n);
+            auto last=cmark_node_last_child(n);
+            if(last&&cmark_node_get_type(last)==CMARK_NODE_TEXT) {
+                auto text=literal(last);size_t end=text.size(),id=end;
+                while(id>0&&(g_ascii_isalnum(text[id-1])||text[id-1]=='-')) --id;
+                if(id<end&&id>0&&text[id-1]=='^') {
+                    size_t a=id-1;
+                    while(a>0&&(text[a-1]==' '||text[a-1]=='	')) --a;
+                    if(a<id-1) {
+                        auto suffix=count(text.substr(a));
+                        int limit=count(r.text)-suffix;
+                        r.text.resize(g_utf8_offset_to_pointer(r.text.data(),limit)-r.text.data());
+                        for(auto& s:r.spans) s.end=std::min(s.end,limit);
+                        for(auto& l:r.links) l.end=std::min(l.end,limit);
+                        r.links.erase(std::remove_if(r.links.begin(),r.links.end(),[](auto& l){return l.start>=l.end;}),r.links.end());
+                    }
+                }
+            }
+            return r;
+        }
         case CMARK_NODE_HEADING:r=inlines(n);style(r,"h"+std::to_string(cmark_node_get_heading_level(n)));return r;
         case CMARK_NODE_CODE_BLOCK:
         case CMARK_NODE_HTML_BLOCK: {
@@ -118,6 +146,7 @@ struct Renderer {
                 auto prefix=cmark_node_get_list_type(n)==CMARK_ORDERED_LIST?
                     std::to_string(index)+(cmark_node_get_list_delim(n)==CMARK_PAREN_DELIM?") ":". "):"• ";
                 auto part=indent(blocks(item,cmark_node_get_list_tight(n)?"\n":"\n\n"),prefix);
+                part.blocks.insert(part.blocks.begin(),{cmark_node_get_start_line(item),0});
                 if(!first) r.text+='\n';
                 first=false;append(r,std::move(part));
             }
@@ -176,12 +205,13 @@ Render Vault::render(const std::string& source,const std::string& text) const {
     auto body=replaced.substr(start);
     std::unique_ptr<cmark_node,decltype(&cmark_node_free)> doc(cmark_parse_document(body.data(),body.size(),0),cmark_node_free);
     if(!doc) throw std::runtime_error("cannot parse Markdown");
-    Render result;
-    for(auto node=cmark_node_first_child(doc.get());node;node=cmark_node_next(node)) {
-        if(!result.blocks.empty()) result.text+="\n\n";
-        result.blocks.push_back({cmark_node_get_start_line(node)+removed,count(result.text)});
-        append(result,renderer.block(node));
+    Render result=renderer.blocks(doc.get(),"\n\n");
+    std::vector<Block> positions;
+    for(auto b:result.blocks) {
+        b.line+=removed;
+        if(positions.empty()||positions.back().line!=b.line) positions.push_back(b);
     }
+    result.blocks=std::move(positions);
     auto key=[](const Span& s) {return std::tie(s.start,s.end,s.style);};
     auto& spans=result.spans;
     spans.erase(std::remove_if(spans.begin(),spans.end(),[](auto& s){return s.start>=s.end;}),spans.end());

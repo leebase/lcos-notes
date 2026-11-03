@@ -13,7 +13,7 @@ def test_blocks_exact(tmp_path):
     text = "---\ntags: [x]\n---\n# Head [[A]]\n\npara one\nline two\n\n- a\n- b\n\n> q\n"
     v = _vault(tmp_path, {"A.md": "", "R.md": text, "C.md": text.replace("\n", "\r\n")})
     want = [{"line": 4, "offset": 0}, {"line": 6, "offset": 8}, {"line": 9, "offset": 27},
-            {"line": 12, "offset": 36}]
+            {"line": 10, "offset": 31}, {"line": 12, "offset": 36}]      # U6: list items are positions
     assert cli_json("blocks", v, "R.md") == want
     assert cli_json("blocks", v, "C.md") == want
 

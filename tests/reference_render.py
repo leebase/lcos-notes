@@ -5,6 +5,7 @@ span and link rules. Wikilinks come from the accepted U1 `links` command, passed
 """
 import ctypes
 import ctypes.util
+import re
 
 _lib = ctypes.CDLL("libcmark.so.0.30.2")
 _P = ctypes.c_void_p
@@ -44,7 +45,11 @@ def _literal(node):
     return raw.decode("utf-8") if raw else ""
 
 
+BLOCK_ID = re.compile(r"[ \t]+\^[A-Za-z0-9-]+$")          # CONTRACT.md U6: hidden in reading view
+
+
 class _R:
+    """Zero-length spans with style ("@", node) mark where a block's rendering starts (U6 blocks)."""
     def __init__(self, links, source_name):
         self.links = links
         self.source_name = source_name
@@ -122,14 +127,23 @@ class _R:
                 text += sep
             off = len(text)
             text += t
-            spans += [(a + off, b + off, st) for a, b, st in s]
+            spans += [(off, off, ("@", c))] + [(a + off, b + off, st) for a, b, st in s]
             links += [(a + off, b + off, r, res) for a, b, r, res in l]
         return text, spans, links
 
     def block(self, node):
         kind = _lib.cmark_node_get_type(node)
         if kind == PARAGRAPH:
-            return self.inlines(node)
+            t, s, l = self.inlines(node)
+            last = list(_children(node))[-1:]
+            if last and _lib.cmark_node_get_type(last[0]) == TEXT:
+                m = BLOCK_ID.search(_literal(last[0]))
+                if m:
+                    n = len(t) - len(m.group(0))
+                    t = t[:n]
+                    s = [(min(a, n), min(b, n), st) for a, b, st in s]
+                    l = [x for x in l if x[1] <= n]
+            return t, s, l
         if kind == HEADING:
             t, s, l = self.inlines(node)
             return t, s + [(0, len(t), f"h{_lib.cmark_node_get_heading_level(node)}")], l
@@ -156,7 +170,7 @@ class _R:
                     text += "\n"
                 off = len(text)
                 text += t
-                spans += [(a + off, b + off, st) for a, b, st in s]
+                spans += [(off, off, ("@", item))] + [(a + off, b + off, st) for a, b, st in s]
                 links += [(a + off, b + off, r, res) for a, b, r, res in l]
             return text, spans, links
         return "", [], []
@@ -217,17 +231,17 @@ def _parse(text, links):
 
 
 def blocks(text: str, links: list, source_path: str, md=()) -> list:
-    """CONTRACT.md U4: top-level blocks as {"line", "offset"}. md: U5 Markdown note links."""
+    """CONTRACT.md U6 (replacing U4): block starts as {"line", "offset"}. md: U5 Markdown note links."""
     links = _merge(links, md)
     doc, removed = _parse(text, links)
     try:
-        r = _R(links, source_path.rsplit("/", 1)[-1][:-3])
-        out, length = [], 0
-        for i, c in enumerate(_children(doc)):
-            if i:
-                length += 2
-            out.append({"line": _lib.cmark_node_get_start_line(c) + removed, "offset": length})
-            length += len(r.block(c)[0])
+        _t, spans, _l = _R(links, source_path.rsplit("/", 1)[-1][:-3]).blocks(doc, "\n\n")
+        out = []
+        for a, _b, st in spans:                              # CONTRACT.md U6: pre-order block starts
+            if isinstance(st, tuple):
+                line = _lib.cmark_node_get_start_line(st[1]) + removed
+                if not out or out[-1]["line"] != line:
+                    out.append({"line": line, "offset": a})
         return out
     finally:
         _lib.cmark_node_free(doc)

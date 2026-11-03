@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <sys/stat.h>
+#include <map>
 namespace notes {
 namespace fs = std::filesystem;
 using Maybe = std::optional<std::string>;
@@ -26,7 +27,13 @@ std::vector<Link> parse(const std::string& text);
 std::vector<Link> parse_markdown(const std::string& text);
 std::vector<Link> parse_all(const std::string& text);
 std::string creation_target(const std::string& source, const Link& link);
-struct Tag { std::string tag; int count = 0; };
+struct Tag {
+    std::string tag;
+    int count = 0;
+    // Sorted membership for listed tags, including implicit ancestors that are
+    // not valid public tagged/retag arguments (for example "2025" or "").
+    std::vector<std::string> notes;
+};
 struct Match { std::string path, text; int line, col; };
 struct Backlink { std::string source, raw, text; int line, col; };
 struct Rewrite { int start, end, length; };
@@ -35,6 +42,7 @@ struct Rename {
     std::vector<std::string> updated;
     // Actual replacements in the renamed note, in original code point coordinates.
     std::vector<Rewrite> rewrites;
+    std::map<std::string,std::vector<Rewrite>> note_rewrites;
     int map_caret(int offset) const;
 };
 struct Span { int start, end; std::string style; };
@@ -56,9 +64,11 @@ public:
     std::vector<std::string> search(const std::string& query) const;
     std::vector<Tag> tags() const;
     std::vector<std::string> tagged(std::string tag) const;
-    std::vector<Match> find(const std::string& query) const;
+    std::vector<Match> find(const std::string& query, bool regex=false, bool word=false) const;
     std::vector<Backlink> backlinks(const std::string& note) const;
     Render render(const std::string& source, const std::string& text) const;
+    Rename retag(std::string old, std::string target) const;
+    std::vector<Backlink> mentions(const std::string& note) const;
     Rename rename(const std::string& old, std::string target) const;
     std::pair<std::string, bool> create(std::string target) const;
 };

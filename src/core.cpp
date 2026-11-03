@@ -314,8 +314,8 @@ static int parent_fd(const Vault& v,const std::string& path) {
     }
     return fd;
 }
-static std::string validated_target(std::string target) {
-    target=strip(target);
+static std::string validated_target(std::string target,bool note=true) {
+    if(note) target=strip(target);
     if(target.empty() || target[0]=='/') fail("empty or absolute target");
     fold(target);
     for(const char* c=target.c_str();*c;c=g_utf8_next_char(c)) {
@@ -468,12 +468,9 @@ static bool valid_tag(const std::string& s) {
     }
     return non_digit;
 }
-static std::string whitespace(std::string s) {
-    auto a=s.find_first_not_of(" \t\r\n");if(a==std::string::npos) return "";
-    return s.substr(a,s.find_last_not_of(" \t\r\n")-a+1);
-}
-static std::vector<std::string> note_tags(const std::string& text) {
-    std::vector<std::string> out,lines;
+struct TagOccurrence {std::string tag;size_t start,end;};
+static std::vector<TagOccurrence> tag_occurrences(const std::string& text) {
+    std::vector<TagOccurrence> out;std::vector<std::string> lines;
     std::vector<size_t> starts;
     for(size_t start=0;start<text.size();) {
         auto end=text.find('\n',start);if(end==std::string::npos) end=text.size();
@@ -484,29 +481,31 @@ static std::vector<std::string> note_tags(const std::string& text) {
     if(!lines.empty()&&lines[0]=="---") {
         for(size_t i=1;i<lines.size();++i) if(lines[i]=="---"||lines[i]=="...") {finish=i;body=i+1;break;}
     }
-    auto item=[&](std::string s) {
-        s=whitespace(s);
-        if(s.size()>=2&&((s.front()=='\''&&s.back()=='\'')||(s.front()=='"'&&s.back()=='"'))) s=s.substr(1,s.size()-2);
-        if(!s.empty()&&s[0]=='#') s.erase(0,1);
-        if(valid_tag(s)) out.push_back(s);
+    auto item=[&](size_t a,size_t b) {
+        while(a<b&&g_ascii_isspace(text[a])) ++a;
+        while(b>a&&g_ascii_isspace(text[b-1])) --b;
+        if(b-a>=2&&((text[a]=='\''&&text[b-1]=='\'')||(text[a]=='"'&&text[b-1]=='"'))) {++a;--b;}
+        if(a<b&&text[a]=='#') ++a;
+        auto tag=text.substr(a,b-a);
+        if(valid_tag(tag)) out.push_back({tag,a,b});
     };
-    for(size_t i=1;i<finish;++i) if(lines[i].compare(0,5,"tags:")==0) {
-        auto s=whitespace(lines[i].substr(5));
-        if(s.empty()) {
+    for(size_t i=1;i<finish;++i) {
+        size_t key=lines[i].compare(0,5,"tags:")==0?5:lines[i].compare(0,4,"tag:")==0?4:0;
+        if(!key) continue;
+        size_t a=starts[i]+key,b=starts[i]+lines[i].size();
+        while(a<b&&g_ascii_isspace(text[a])) ++a;
+        while(b>a&&g_ascii_isspace(text[b-1])) --b;
+        if(a==b) {
             while(i+1<finish) {
-                auto next=lines[i+1];auto at=next.find_first_not_of(" \t");
-                if(at==std::string::npos||next.compare(at,2,"- ")!=0) break;
-                ++i;item(next.substr(at+2));
-            }
-        } else if(s.front()=='[') {
-            if(s.back()!=']') continue;
-            s=s.substr(1,s.size()-2);size_t start=0;
-            for(size_t j=0;j<=s.size();++j) {
-                if(j==s.size()||s[j]==',') {item(s.substr(start,j-start));start=j+1;}
+                auto at=lines[i+1].find_first_not_of(" \t");
+                if(at==std::string::npos||lines[i+1].compare(at,2,"- ")!=0) break;
+                ++i;item(starts[i]+at+2,starts[i]+lines[i].size());
             }
         } else {
-            size_t start=0;
-            for(size_t j=0;j<=s.size();++j) if(j==s.size()||s[j]==','||g_ascii_isspace(s[j])) {item(s.substr(start,j-start));start=j+1;}
+            bool flow=text[a]=='[';
+            if(flow) {if(text[b-1]!=']') continue;++a;--b;}
+            size_t start=a;
+            for(size_t j=a;j<=b;++j) if(j==b||text[j]==','||(!flow&&g_ascii_isspace(text[j]))) {item(start,j);start=j+1;}
         }
     }
     auto mask=prose(text);
@@ -516,19 +515,29 @@ static std::vector<std::string> note_tags(const std::string& text) {
             if(line[i]!='#'||!mask[starts[n]+i]||(i&&line[i-1]!=' '&&line[i-1]!='\t')) continue;
             size_t j=i+1;
             while(j<line.size()&&tag_char(g_utf8_get_char(line.data()+j))) j=g_utf8_next_char(line.data()+j)-line.data();
-            auto tag=line.substr(i+1,j-i-1);if(valid_tag(tag)) out.push_back(tag);
+            auto tag=line.substr(i+1,j-i-1);if(valid_tag(tag)) out.push_back({tag,starts[n]+i+1,starts[n]+j});
             i=j?j-1:i;
         }
     }
     return out;
 }
+static std::vector<std::string> note_tags(const std::string& text) {
+    std::vector<std::string> out;for(auto& t:tag_occurrences(text)) out.push_back(t.tag);return out;
+}
 std::vector<Tag> Vault::tags() const {
-    std::map<std::string,Tag> all;
+    std::map<std::string,Tag> all;std::set<std::string> explicit_tags;
     for(auto& path:notes()) if(auto text=utf8_note(*this,path)) {
         std::set<std::string> seen;
         for(auto& tag:note_tags(*text)) {
-            auto key=fold(tag);if(!seen.insert(key).second) continue;
-            auto& row=all[key];if(row.count==0) row.tag=tag;++row.count;
+            auto key=fold(tag);
+            if(explicit_tags.insert(key).second) all[key].tag=tag;
+            for(std::string parent=tag;;) {
+                auto k=fold(parent);auto& row=all[k];
+                if(row.tag.empty()) row.tag=parent;
+                if(seen.insert(k).second) {++row.count;row.notes.push_back(path);}
+                auto slash=parent.rfind('/');if(slash==std::string::npos) break;
+                parent.resize(slash);
+            }
         }
     }
     std::vector<Tag> out;for(auto& row:all) out.push_back(row.second);return out;
@@ -550,19 +559,74 @@ static std::u32string lower_points(const std::string& s) {
     for(const char* p=s.data();p<s.data()+s.size();p=g_utf8_next_char(p)) out+=g_unichar_tolower(g_utf8_get_char(p));
     return out;
 }
-std::vector<Match> Vault::find(const std::string& query) const {
+static bool word_char(gunichar c) {return g_unichar_isalnum(c)||c=='_';}
+static bool whole_word(const std::u32string& points,size_t a,size_t b) {
+    return (!a||!word_char(points[a-1]))&&(b==points.size()||!word_char(points[b]));
+}
+std::vector<Match> Vault::find(const std::string& query,bool regex,bool word) const {
     if(query.empty()) fail("empty query");
     auto q=lower_points(query);std::vector<Match> out;
+    GError* error=nullptr;
+    std::unique_ptr<GRegex,decltype(&g_regex_unref)> pattern(regex?g_regex_new(query.c_str(),G_REGEX_CASELESS,G_REGEX_MATCH_DEFAULT,&error):nullptr,g_regex_unref);
+    if(error) {std::string message=error->message;g_error_free(error);fail(message);}
     for(auto& path:notes()) if(auto text=utf8_note(*this,path)) {
         int number=0;
         for(size_t start=0;start<=text->size();) {
             auto end=text->find('\n',start);if(end==std::string::npos) end=text->size();
             auto line=text->substr(start,end-start);if(!line.empty()&&line.back()=='\r') line.pop_back();
             ++number;auto points=lower_points(line);size_t at=0;
+            while(at<=points.size()) {
+                size_t a,b;
+                if(regex) {
+                    GMatchInfo* info=nullptr;
+                    auto byte=g_utf8_offset_to_pointer(line.data(),at)-line.data();
+                    bool found=g_regex_match_full(pattern.get(),line.data(),line.size(),byte,G_REGEX_MATCH_DEFAULT,&info,&error);
+                    if(error) {std::string message=error->message;g_error_free(error);if(info) g_match_info_free(info);fail(message);}
+                    if(!found) {if(info) g_match_info_free(info);break;}
+                    int x,y;g_match_info_fetch_pos(info,0,&x,&y);g_match_info_free(info);
+                    a=g_utf8_pointer_to_offset(line.data(),line.data()+x);b=g_utf8_pointer_to_offset(line.data(),line.data()+y);
+                } else {a=points.find(q,at);if(a==std::u32string::npos) break;b=a+q.size();}
+                if(b>a&&(!word||whole_word(points,a,b))) {
+                    out.push_back({path,line,number,int(a+1)});
+                    if(out.size()==500) return out;
+                    at=b;
+                } else at=a+1;
+            }
+            if(end==text->size()) break;
+            start=end+1;
+        }
+    }
+    return out;
+}
+std::vector<Backlink> Vault::mentions(const std::string& note) const {
+    require_note(note);std::vector<Backlink> out;
+    if(!utf8_note(*this,note)) return out;
+    auto q=lower_points(fs::path(note).stem().string());
+    for(auto& path:notes()) if(path!=note) if(auto text=utf8_note(*this,path)) {
+        auto mask=prose(*text);
+        // Closed frontmatter uses the same line grammar as tag extraction.
+        size_t body=0,first=text->find('\n');
+        auto line_at=[&](size_t a,size_t b) {auto l=text->substr(a,b-a);if(!l.empty()&&l.back()=='\r') l.pop_back();return l;};
+        if(first!=std::string::npos&&line_at(0,first)=="---") for(size_t a=first+1;a<text->size();) {
+            auto b=text->find('\n',a);if(b==std::string::npos) b=text->size();
+            auto l=line_at(a,b);
+            if(l=="---"||l=="...") {body=b<text->size()?b+1:b;break;}a=b+1;
+        }
+        std::fill(mask.begin(),mask.begin()+body,false);
+        for(auto& l:parse_all(*text)) {
+            auto a=g_utf8_offset_to_pointer(text->data(),l.offset)-text->data();
+            std::fill(mask.begin()+a,mask.begin()+a+l.raw.size(),false);
+        }
+        int number=0;
+        for(size_t start=0;start<=text->size();) {
+            auto end=text->find('\n',start);if(end==std::string::npos) end=text->size();
+            auto line=line_at(start,end);auto points=lower_points(line);++number;size_t at=0;
             while((at=points.find(q,at))!=std::u32string::npos) {
-                out.push_back({path,line,number,int(at+1)});
-                if(out.size()==500) return out;
-                at+=q.size();
+                auto a=start+(g_utf8_offset_to_pointer(line.data(),at)-line.data());
+                auto b=start+(g_utf8_offset_to_pointer(line.data(),at+q.size())-line.data());
+                if(whole_word(points,at,at+q.size())&&std::all_of(mask.begin()+a,mask.begin()+b,[](bool b){return b;})) {
+                    out.push_back({path,"",line,number,int(at+1)});at+=q.size();
+                } else ++at;
             }
             if(end==text->size()) break;
             start=end+1;
@@ -592,26 +656,136 @@ int Rename::map_caret(int offset) const {
     }
     return mapped;
 }
+struct Change {std::string path,final,text,original;fs::path staged,backup;bool installed=false;};
+// Plan completely before staging. Backups and staged bytes share each original's
+// directory, and travel with a directory move. Roll back the namespace first.
+static void commit_changes(const Vault& vault,std::vector<Change>& changes,
+                           const std::string& old="",const std::string& dest="") {
+    auto root=vault.root;
+    bool moved=false;std::vector<fs::path> made;
+    auto relocate=[&](fs::path p) {
+        if(!moved) return p;
+        auto rel=p.lexically_relative(root).generic_string();
+        if(rel==old||rel.compare(0,old.size()+1,old+"/")==0) return root/(dest+rel.substr(old.size()));
+        return p;
+    };
+    auto cleanup=[&]() {for(auto& c:changes) {
+        std::error_code ec;if(!c.staged.empty()) fs::remove(relocate(c.staged),ec);
+        if(!c.backup.empty()) fs::remove(relocate(c.backup),ec);
+    }};
+    auto temporary=[&](const std::string& path,const char* kind) {
+        auto parent=(root/path).parent_path();
+        for(int i=0;i<1000;++i) {
+            auto temp=parent/(".lcos-notes-"+std::string(kind)+"-"+std::to_string(getpid())+"-"+std::to_string(i));
+            if(!fs::exists(fs::symlink_status(temp))) return temp;
+        }
+        fail("cannot allocate temporary path");return fs::path{};
+    };
+    try {
+        for(auto& c:changes) {
+            auto backup=temporary(c.path,"backup");
+            if(::link((root/c.path).c_str(),backup.c_str())!=0) fail("cannot back up note");
+            c.backup=backup;
+            auto staged=temporary(c.path,"save");
+            FD file(open(staged.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600));c.staged=staged;
+            struct stat st{};
+            if(stat((root/c.path).c_str(),&st)!=0||fchmod(file.n,st.st_mode&0777)!=0) fail("cannot preserve permissions");
+            size_t written=0;
+            while(written<c.text.size()) {
+                auto n=write(file.n,c.text.data()+written,c.text.size()-written);
+                if(n<0&&errno==EINTR) continue;
+                if(n<=0) fail("cannot write note");
+                written+=n;
+            }
+            if(fsync(file.n)!=0) fail("cannot flush note");
+        }
+        for(auto& c:changes) if(utf8_note(vault,c.path)!=Maybe(c.original)) fail("Changed on disk; not renamed");
+        if(!old.empty()&&old!=dest) {
+            fs::path current=root;
+            for(auto& part:fs::path(dest).parent_path()) {current/=part;if(fs::create_directory(current)) made.push_back(current);}
+            fs::rename(root/old,root/dest);moved=true;
+        }
+        for(auto& c:changes) {
+            if(::rename(relocate(c.staged).c_str(),(root/c.final).c_str())!=0) fail("cannot replace note");
+            c.installed=true;FD dir(parent_fd(vault,c.final));fsync(dir.n);
+        }
+        cleanup();
+    } catch(...) {
+        if(moved) {fs::rename(root/dest,root/old);moved=false;}
+        for(auto it=changes.rbegin();it!=changes.rend();++it) if(it->installed)
+            if(::rename(it->backup.c_str(),(root/it->path).c_str())!=0) fail("rename rollback failed; backup retained");
+        cleanup();
+        for(auto it=made.rbegin();it!=made.rend();++it) {std::error_code ec;fs::remove(*it,ec);}
+        throw;
+    }
+}
+Rename Vault::retag(std::string old,std::string target) const {
+    if(!old.empty()&&old[0]=='#') old.erase(0,1);
+    if(!target.empty()&&target[0]=='#') target.erase(0,1);
+    if(!valid_tag(old)||!valid_tag(target)) fail("invalid tag");
+    auto key=fold(old),next=fold(target);
+    if(next.compare(0,key.size()+1,key+"/")==0) fail("new tag is nested under old tag");
+    Rename result{old,target,{},{},{}};std::vector<Change> changes;bool found=false;
+    for(auto& path:notes()) if(auto text=utf8_note(*this,path)) {
+        auto rewritten=*text;
+        auto occurrences=tag_occurrences(*text);
+        for(auto it=occurrences.rbegin();it!=occurrences.rend();++it) {
+            auto k=fold(it->tag);
+            if(k!=key&&k.compare(0,key.size()+1,key+"/")!=0) continue;
+            found=true;
+            // Locate the prefix boundary in original bytes, including folds which
+            // expand a character and NFC spellings of a component.
+            size_t n=it->tag.size();
+            if(k!=key) {
+                for(size_t slash=it->tag.find('/');slash!=std::string::npos;slash=it->tag.find('/',slash+1))
+                    if(fold(it->tag.substr(0,slash))==key) {n=slash;break;}
+            }
+            if(it->tag.substr(0,n)==target) continue;
+            rewritten.replace(it->start,n,target);
+            int a=chars(text->substr(0,it->start)),b=a+chars(it->tag.substr(0,n));
+            result.note_rewrites[path].push_back({a,b,chars(target)});
+        }
+        if(rewritten!=*text) {result.updated.push_back(path);changes.push_back({path,path,rewritten,*text,{},{},false});}
+    }
+    if(!found) fail("old tag occurs nowhere");
+    commit_changes(*this,changes);return result;
+}
 Rename Vault::rename(const std::string& old,std::string target) const {
-    require_note(old);if(!utf8_note(*this,old)) fail("note is not UTF-8 text");
-    auto dest=validated_target(trim(target))+".md";
-    auto before=files(),after=before;
-    for(auto& path:before) if(path!=old&&is_note(path)&&fold(path)==fold(dest)) fail("note already exists");
+    auto before=files(),dirs=directories();
+    bool folder=std::find(dirs.begin(),dirs.end(),old)!=dirs.end();
+    bool note=!folder&&is_note(old);
+    if(!folder&&std::find(before.begin(),before.end(),old)==before.end()) fail("source does not exist");
+    if(note&&!utf8_note(*this,old)) fail("note is not UTF-8 text");
+    auto dest=validated_target(trim(target),note)+(note?".md":"");
+    auto moved=[&](const std::string& path) {
+        return path==old||(folder&&path.compare(0,old.size()+1,old+"/")==0)?dest+path.substr(old.size()):path;
+    };
+    if(folder) {
+        if(fold(dest).compare(0,fold(old).size()+1,fold(old)+"/")==0) fail("new path is inside old path");
+        for(fs::recursive_directory_iterator i(root/old),end;i!=end;++i) {
+            if(fs::is_symlink(i->symlink_status())) fail("symlink under moved folder");
+            if(fs::is_regular_file(i->symlink_status())&&is_note(i->path().string())) {
+                std::ifstream in(i->path(),std::ios::binary);std::string text((std::istreambuf_iterator<char>(in)),{});
+                if(!g_utf8_validate(text.data(),text.size(),nullptr)) fail("note is not UTF-8 text");
+            }
+        }
+    }
+    auto all=before;all.insert(all.end(),dirs.begin(),dirs.end());
+    for(auto& path:all) if(path!=old&&fold(path)==fold(dest)&&(!note||is_note(path)||path==dest)) fail("rename path already exists");
     fs::path current=root;
     for(auto& part:fs::path(dest)) {
         current/=part;auto st=fs::symlink_status(current);
         if(fs::is_symlink(st)) fail("symlink in rename path");
-        if(fs::exists(st)&&((current==root/dest&&dest!=old)|| (current!=root/dest&&!fs::is_directory(st)))) fail("rename path already exists");
+        if(fs::exists(st)&&((current==root/dest&&dest!=old)||(current!=root/dest&&!fs::is_directory(st)))) fail("rename path already exists");
     }
-    *std::find(after.begin(),after.end(),old)=dest;std::sort(after.begin(),after.end());
-    struct Change {std::string path,final,text,original;fs::path staged,backup;bool installed=false;};
-    std::vector<Change> changes;Rename result{old,dest,{},{}};
+    auto after=before;for(auto& path:after) path=moved(path);std::sort(after.begin(),after.end());
+    std::vector<Change> changes;Rename result{old,dest,{},{},{}};
     for(auto& path:notes()) if(auto text=utf8_note(*this,path)) {
-        auto source=path==old?dest:path;auto rewritten=*text;
+        auto source=moved(path);auto rewritten=*text;
         auto links=parse_all(*text);
         for(auto it=links.rbegin();it!=links.rend();++it) {
             auto& l=*it;auto resolved=l.markdown?resolve_markdown(before,path,l.target):resolve_files(before,path,l.target);if(!resolved) continue;
-            auto intended=*resolved==old?dest:*resolved;
+            auto intended=moved(*resolved);
             if((l.markdown?resolve_markdown(after,source,l.target):resolve_files(after,source,l.target))==Maybe(intended)) continue;
             auto full=is_note(intended)?intended.substr(0,intended.size()-3):intended;
             auto name=fs::path(full).filename().string();
@@ -641,7 +815,7 @@ Rename Vault::rename(const std::string& old,std::string target) const {
             if(!raw) fail("link cannot preserve its destination");
             auto begin=g_utf8_offset_to_pointer(text->data(),l.offset)-text->data();
             rewritten.replace(begin,l.raw.size(),*raw);
-            if(path==old) result.rewrites.push_back({l.offset,l.offset+l.length,int(g_utf8_strlen(raw->data(),raw->size()))});
+            result.note_rewrites[path].push_back({l.offset,l.offset+l.length,int(g_utf8_strlen(raw->data(),raw->size()))});
         }
         // A new destination containing Markdown punctuation can change the prose
         // mask around it. Verify the final document before staging any writes.
@@ -651,58 +825,16 @@ Rename Vault::rename(const std::string& old,std::string target) const {
             const auto& l=links[i];const auto& next=final_links[i];
             auto was=l.markdown?resolve_markdown(before,path,l.target):resolve_files(before,path,l.target);
             auto now=next.markdown?resolve_markdown(after,source,next.target):resolve_files(after,source,next.target);
-            if(l.markdown!=next.markdown || (was ? now!=Maybe(*was==old?dest:*was) : next.raw!=l.raw))
+            if(l.markdown!=next.markdown || (was ? now!=Maybe(moved(*was)) : next.raw!=l.raw))
                 fail("link cannot preserve its destination in document");
         }
         if(rewritten!=*text) result.updated.push_back(source);
-        if(rewritten!=*text||path==old) changes.push_back({path,source,rewritten,*text,{},{},false});
+        if(rewritten!=*text) changes.push_back({path,source,rewritten,*text,{},{},false});
     }
     std::sort(result.updated.begin(),result.updated.end());
     if(dest==old&&result.updated.empty()) return result;
-    // Stage every changed file before replacing any original. Hard-link backups allow
-    // rollback of an I/O failure during the multi-file commit. Untouched files are moved.
-    std::vector<fs::path> made;
-    auto cleanup=[&]() {for(auto& c:changes) {std::error_code ec;if(!c.staged.empty()) fs::remove(c.staged,ec);if(!c.backup.empty()) fs::remove(c.backup,ec);}};
-    auto temporary=[&](const std::string& path,const char* kind) {
-        auto parent=(root/path).parent_path();
-        for(int i=0;i<1000;++i) {
-            auto temp=parent/(".lcos-notes-"+std::string(kind)+"-"+std::to_string(getpid())+"-"+std::to_string(i));
-            if(!fs::exists(fs::symlink_status(temp))) return temp;
-        }
-        fail("cannot allocate temporary path");return fs::path{};
-    };
-    try {
-        current=root;
-        for(auto& part:fs::path(dest).parent_path()) {current/=part;if(fs::create_directory(current)) made.push_back(current);}
-        for(auto& c:changes) {
-            auto backup=temporary(c.path,"backup");
-            if(::link((root/c.path).c_str(),backup.c_str())!=0) fail("cannot back up note");
-            c.backup=backup;
-            if(c.text==c.original) continue;
-            auto staged=temporary(c.final,"save");
-            FD file(open(staged.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600));
-            c.staged=staged;
-            struct stat st{};if(stat((root/c.path).c_str(),&st)!=0||fchmod(file.n,st.st_mode&0777)!=0) fail("cannot preserve permissions");
-            size_t written=0;
-            while(written<c.text.size()) {auto n=write(file.n,c.text.data()+written,c.text.size()-written);if(n<0&&errno==EINTR) continue;if(n<=0) fail("cannot write note");written+=n;}
-            if(fsync(file.n)!=0) fail("cannot flush note");
-        }
-        for(auto& c:changes) if(utf8_note(*this,c.path)!=Maybe(c.original)) fail("Changed on disk; not renamed");
-        for(auto& c:changes) {
-            auto from=c.staged.empty()?root/c.path:c.staged;
-            if(::rename(from.c_str(),(root/c.final).c_str())!=0) fail("cannot replace note");
-            c.installed=true;
-            if(c.path!=c.final&&!c.staged.empty()&&::unlink((root/c.path).c_str())!=0) fail("cannot remove old note");
-            FD dir(parent_fd(*this,c.final));fsync(dir.n);
-        }
-        cleanup();
-    } catch(...) {
-        for(auto it=changes.rbegin();it!=changes.rend();++it) if(it->installed) {
-            if(it->path!=it->final) ::unlink((root/it->final).c_str());
-            if(::rename(it->backup.c_str(),(root/it->path).c_str())!=0) fail("rename rollback failed; backup retained");
-        }
-        cleanup();for(auto it=made.rbegin();it!=made.rend();++it) {std::error_code ec;fs::remove(*it,ec);}throw;
-    }
+    if(result.note_rewrites.count(old)) result.rewrites=result.note_rewrites.at(old);
+    commit_changes(*this,changes,old,dest);
     return result;
 }
 

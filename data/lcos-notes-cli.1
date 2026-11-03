@@ -1,4 +1,4 @@
-.TH LCOS-NOTES-CLI 1 "October 2026" "LCOS Notes 0.5.0" "User Commands"
+.TH LCOS-NOTES-CLI 1 "November 2026" "LCOS Notes 0.6.0" "User Commands"
 .SH NAME
 lcos-notes-cli \- query and modify a local Markdown vault
 .SH SYNOPSIS
@@ -30,28 +30,49 @@ List up to 50 notes ranked by a case-folded subsequence query.
 Create an empty note or return an existing resolved note.
 .TP
 .B tags VAULT
-List tags and per-note counts.
+List tags, including implicit parents, with descendant-note counts.
+Both singular tag: and tags: frontmatter keys are recognized in all supported forms.
 .TP
 .B tagged VAULT TAG
 List notes containing TAG or its nested tags.
 .TP
-.B find VAULT QUERY
+.B find VAULT QUERY [--regex] [--word]
 Find up to 500 non-overlapping case-insensitive matches with path, line,
 Unicode column and line text. Matches stay within one line, excluding its newline
 and final carriage return. Newline queries match nothing. Empty queries are refused.
+Options must follow QUERY. --regex uses case-insensitive GLib/PCRE syntax per
+line; invalid patterns are refused and empty matches skipped. --word requires
+non-letter, non-digit, non-underscore boundaries. Rejected candidates retry one
+character after their start; accepted matches continue at their end.
+.TP
+.B retag VAULT OLD NEW
+Rename a tag prefix in inline tags and frontmatter, including descendants.
+One leading hash is ignored. Only tag text changes; quotes, punctuation and
+other bytes remain. Refuse invalid tags, absent OLD, or NEW nested under OLD.
+.TP
+.B mentions VAULT NOTE
+List whole-word, case-insensitive unlinked mentions of the note basename in
+other notes as source, line, col and text. Excludes frontmatter, code and both
+note-link syntaxes; rejected candidates retry one character later.
 .TP
 .B backlinks VAULT NOTE
 List incoming wikilinks and Markdown note links from other notes.
 .TP
 .B rename VAULT OLD NEW
-Move a note and repair affected resolved links, preserving other bytes.
+Move a note, folder or attachment and repair affected resolved links in both
+syntaxes, preserving other bytes. Folder and attachment NEW paths have no .md
+handling; attachments may have no extension when link invariants hold.
+Refuse existing destinations, a folder moved inside itself, symlinks under
+moved folders and invalid UTF-8 notes under them. Refusals write nothing.
 .TP
 .B render VAULT NOTE
 Render CommonMark with text, style spans and followable note links. Offsets are zero-based
-Unicode code points; ranges exclude their end. Frontmatter is omitted.
+Unicode code points; ranges exclude their end. Frontmatter and trailing paragraph block IDs are omitted; ranges are clipped.
 .TP
 .B blocks VAULT NOTE
-List top-level CommonMark blocks as objects with line and offset. The line is
+List CommonMark blocks in preorder, including list items and quote children,
+excluding document and list nodes; consecutive duplicate start lines are omitted.
+Return blocks as objects with line and offset. The line is
 1-based in the original file, including removed frontmatter. The offset is a
 0-based Unicode code point position in the same text returned by render.
 Invalid UTF-8 notes are refused.
@@ -67,6 +88,11 @@ escaping percent and path hashes and, outside angles, spaces and parentheses.
 0 on success; 2 on refusal, with a single refused: reason line on standard error.
 Unsafe creation targets and invalid note paths are refused. Invalid UTF-8 notes
 are ignored by search, tags and backlinks and refused by render and rename.
+.SH UNSUPPORTED
+Markdown links with titles or reference syntax, following images and external
+links, transclusion, attachment viewing, file watching, NFC search, settings,
+daily notes, graph view, multiple windows, GFM extensions, package publishing
+and signing are outside the supported scope.
 .SH SEE ALSO
 .BR lcos-notes (1)
 .SH AUTHORS

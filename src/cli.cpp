@@ -13,7 +13,7 @@ static std::string fields(const Link& l) {
 }
 int main(int argc,char** argv) {
     try {
-        if(argc<3) throw std::runtime_error("usage: lcos-notes-cli notes|links|mdlinks|resolve|switch|create|tags|tagged|find|backlinks|rename|render|blocks VAULT [arguments]");
+        if(argc<3) throw std::runtime_error("usage: lcos-notes-cli notes|links|mdlinks|resolve|switch|create|tags|tagged|find|backlinks|mentions|retag|rename|render|blocks VAULT [arguments]");
         std::string command=argv[1],out; Vault vault(argv[2]);
         if(command=="notes" && argc==3) out=array(vault.notes());
         else if(command=="blocks" && argc==4) {
@@ -33,12 +33,26 @@ int main(int argc,char** argv) {
         else if(command=="tags" && argc==3) {
             out="[";for(auto& t:vault.tags()) {if(out.size()>1) out+=",";out+="{\"tag\":"+quote(t.tag)+",\"count\":"+std::to_string(t.count)+"}";}out+="]";
         } else if(command=="tagged" && argc==4) out=array(vault.tagged(argv[3]));
-        else if(command=="find" && argc==4) {
-            out="[";for(auto& m:vault.find(argv[3])) {if(out.size()>1) out+=",";out+="{\"path\":"+quote(m.path)+",\"line\":"+std::to_string(m.line)+",\"col\":"+std::to_string(m.col)+",\"text\":"+quote(m.text)+"}";}out+="]";
+        else if(command=="find" && argc>=4) {
+            bool regex=false,word=false;
+            for(int i=4;i<argc;++i) {
+                std::string option=argv[i];
+                if(option=="--regex") regex=true;
+                else if(option=="--word") word=true;
+                else throw std::runtime_error("invalid find option");
+            }
+            out="[";for(auto& m:vault.find(argv[3],regex,word)) {if(out.size()>1) out+=",";out+="{\"path\":"+quote(m.path)+",\"line\":"+std::to_string(m.line)+",\"col\":"+std::to_string(m.col)+",\"text\":"+quote(m.text)+"}";}out+="]";
         } else if(command=="backlinks" && argc==4) {
             out="[";for(auto& b:vault.backlinks(argv[3])) {if(out.size()>1) out+=",";out+="{\"source\":"+quote(b.source)+",\"line\":"+std::to_string(b.line)+",\"col\":"+std::to_string(b.col)+",\"raw\":"+quote(b.raw)+"}";}out+="]";
-        } else if(command=="rename" && argc==5) {
-            auto r=vault.rename(argv[3],argv[4]);out="{\"from\":"+quote(r.from)+",\"to\":"+quote(r.to)+",\"updated\":"+array(r.updated)+"}";
+        } else if(command=="mentions" && argc==4) {
+            out="[";
+            for(auto& m:vault.mentions(argv[3])) {
+                if(out.size()>1) out+=",";
+                out+="{\"source\":"+quote(m.source)+",\"line\":"+std::to_string(m.line)+",\"col\":"+std::to_string(m.col)+",\"text\":"+quote(m.text)+"}";
+            }
+            out+="]";
+        } else if((command=="rename"||command=="retag") && argc==5) {
+            auto r=command=="rename"?vault.rename(argv[3],argv[4]):vault.retag(argv[3],argv[4]);out="{\"from\":"+quote(r.from)+",\"to\":"+quote(r.to)+",\"updated\":"+array(r.updated)+"}";
         }
         else if(command=="switch" && argc==4) out=array(vault.search(argv[3]));
         else if(command=="create" && argc==4) {

@@ -9,16 +9,16 @@ repair links, and a clean reading view. It has a classic menubar, a notes tree a
 the window manager's own title bar. There are no accounts, no network access, no
 telemetry and no AI features.
 
-Version 0.5.0. Apache License 2.0.
+Version 0.6.0. Apache License 2.0.
 
 ## Download and install (LCOS 1.0)
 
-Download `lcos-notes_0.5.0_amd64.deb` from the
+Download `lcos-notes_0.6.0_amd64.deb` from the
 [latest release](https://github.com/leebase/lcos-notes/releases/latest), then:
 
 ```sh
 sudo apt update
-sudo apt install ./lcos-notes_0.5.0_amd64.deb
+sudo apt install ./lcos-notes_0.6.0_amd64.deb
 ```
 
 Run `sudo apt update` first on a fresh LCOS install: it ships without package lists,
@@ -40,6 +40,11 @@ there. On other Debian-family systems, build your own package from source (below
 [DOCUMENTATION.md](DOCUMENTATION.md) is the user guide. It covers vaults, links,
 keyboard shortcuts, the reading view, backlinks, search, tags, renaming and the
 command-line tool.
+U6 adds parent tag counts, singular frontmatter `tag:`, prefix tag rename (`retag`),
+whole-word and GLib regex search (`find --word --regex`), folder and attachment
+rename, and unlinked mentions (`mentions`). The switcher offers a selectable
+Create row. Newly created notes open in the editor, ready for typing.
+
 The CLI `mdlinks` command lists Markdown note links. Name comparisons normalize to
 NFC before Unicode case folding; stored paths and display text keep their bytes.
 
@@ -47,13 +52,15 @@ The keys you will use most:
 
 | Key | Action |
 |---|---|
+| Ctrl+N | New Note dialog |
+| Ctrl+Shift+E / T / M | Notes, Tags, Unlinked mentions |
 | Ctrl+O | Quick switcher: open or create a note |
 | Alt+Enter, Ctrl+click | Follow the link under the caret (creates missing notes) |
 | Ctrl+E | Toggle the reading view |
 | Ctrl+S | Save (switching notes and closing also save) |
 | Ctrl+Shift+F | Search all notes |
 | Ctrl+Shift+B | Jump to backlinks |
-| F2 | Rename the note and repair links to it |
+| F2 | Rename the current note or selected note, folder, attachment or tag |
 
 ## Building from source
 
@@ -75,7 +82,7 @@ To install system-wide, use `meson setup build --prefix=/usr`, then
 To build a `.deb` for the machine you are on (no root needed; `dpkg-dev` required):
 
 ```sh
-packaging/build-deb.sh ~/out      # writes ~/out/lcos-notes_0.5.0_<arch>.deb
+packaging/build-deb.sh ~/out      # writes ~/out/lcos-notes_0.6.0_<arch>.deb
 ```
 
 ## Tests
@@ -93,3 +100,8 @@ Copyright 2026 Lee Harrington. Licensed under the Apache License, Version 2.0; s
 
 LCOS Notes is an independent project for the LCOS desktop. It is not affiliated
 with Obsidian.
+
+Unsupported: Markdown links with titles or reference syntax, following images
+and non-local links, attachment viewing, transclusion, file watching, NFC search,
+settings dialogs, daily notes, graph view, multiple
+windows, GFM tables/task lists/strikethrough, package publishing and signing.
