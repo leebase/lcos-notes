@@ -251,6 +251,7 @@ These are not supported yet:
 - following images or non-local links, and NFC normalization in search;
 - task items inside block quotes (not recognized by the supported parser);
 - Markdown image embeds (`![alt](file.png)`), PDF embeds and viewing other attachments;
+- full-width callout boxes, callout aliases such as `info` or `todo`, highlights containing bold, italic or code, and highlights coloured in the editor;
 - a settings dialog, daily notes, a graph view and multiple windows.
 
 Package publishing and signing are also unsupported.
@@ -292,24 +293,68 @@ external reloads.
 
 ## Highlights
 
-In reading view, `==text==` highlights text. Edit > Highlight (Ctrl+Shift+H)
-wraps or unwraps the selection; without a selection it inserts empty delimiters.
-The `highlights` command reports rendered highlight ranges and text.
+In reading view, `==text==` shows the text on a yellow background and hides the
+`==` marks. Highlights work in paragraphs, list items, table cells, headings and callouts,
+and can contain links. They can't contain bold, italic or code: `==a **b** c==`
+stays as written. They never span two paragraphs. `==` followed by a
+space, or a closing `==` preceded by one, does not count, so `== spaced ==`, a lone
+`==` and `====` stay as written.
 
-View > Highlights… (Ctrl+Shift+Y) lists the current note's highlights. Select a
-row and press Enter or double-click it to jump there in reading view; Escape closes
-the dialog.
+- **Edit > Highlight** (Ctrl+Shift+H), in the editor: with text selected, wraps it
+  in `==`; if the selection is already wrapped, removes them. With no selection it
+  inserts `====` and puts the caret in the middle. Each use is one Undo step. It does
+  nothing in reading view.
+- **View > Highlights…** (Ctrl+Shift+Y) lists the open note's highlights in order.
+  Double-click a row, or select it and press Enter, to switch to reading view at
+  that highlight. A note without highlights shows "No highlights in this note".
+  Escape closes the dialog.
+- `lcos-notes-cli highlights VAULT NOTE` prints the highlights as JSON
+  (`start`, `end` and `text` in the reading-view text).
 
-## Callouts and embeds
+## Callouts
 
-Begin a block quote with `[!note]`, `[!tip]`, `[!warning]`, `[!danger]`,
-`[!question]` or `[!quote]` for a colored callout. Add a title after the marker;
-otherwise the type supplies the title. Add `-` after the marker to fold the body,
-or `+` for an initially open body. Click a folded callout's title to open or
-close it; folding is reset on re-render.
+A block quote whose first line is `[!type]`, optionally followed by a title, is a
+callout:
 
-A standalone `![[Note]]` embeds a note, `![[Note#Heading]]` a heading section,
-and `![[Note#^block-id]]` a block. Standalone image embeds such as
-`![[photo.png]]` display the image. Embedded notes use their own link locations;
-changes to source notes refresh reading view. Cycles and embeds beyond the depth limit of three
-levels render as links. Missing, invalid or empty targets also render as links.
+```markdown
+> [!warning] Back up first
+> Renaming a folder rewrites links in every note.
+```
+
+The title is bold and the callout is tinted by type: `note` blue, `tip` green,
+`warning` amber, `danger` red, `question` purple and `quote` grey. Any other type
+uses the note colour. Without a title, the type is the title (`[!tip]` shows "Tip").
+
+- `[!tip]-` starts **folded**: only the title shows. Click the title to open or
+  close the body. Folding is a view state only: it never changes the file, and it
+  resets when the note is re-rendered.
+- `[!tip]+` starts open (the same as no sign).
+- Nested quotes and lists inside a callout keep their formatting.
+- The tint sits behind the text. Full-width callout boxes are not drawn yet.
+
+## Embeds
+
+A paragraph that contains nothing but one embed shows the embedded content in
+reading view, indented:
+
+| Source | Shows |
+|---|---|
+| `![[Note]]` | the whole note (frontmatter hidden) |
+| `![[Note#Heading]]` | that heading and everything up to the next heading of the same or higher level |
+| `![[Note#^block-id]]` | the block ending in ` ^block-id` |
+| `![[photo.png]]` | the image, at its own size |
+
+- Links inside embedded content work and resolve from the embedded note's folder.
+  Highlights, callouts, tables and task boxes are formatted as usual. Task boxes
+  inside an embed are not clickable: tick them in the note itself.
+- Embeds update automatically when an embedded note changes on disk.
+- Images: `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp` and `.webp`. A file that can't be
+  loaded shows `[image: path]` in the unresolved-link colour.
+- An embed that points at a missing note, heading or block, an empty or non-UTF-8
+  note, any other kind of file (such as a PDF), a note already being embedded (a
+  loop), or content past the embed depth limit (three levels) shows as an ordinary link instead.
+- An embed sharing its paragraph with other text, such as `see ![[Note]] here`,
+  stays a link.
+- The editor always shows the plain `![[...]]` source.
+- `lcos-notes-cli render` lists embedded images in an `images` array
+  (`offset` in the text and vault-relative `path`).

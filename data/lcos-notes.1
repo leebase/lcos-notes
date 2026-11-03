@@ -41,6 +41,17 @@ line and column and clearing Undo. Unsaved edits are kept instead.
 File > Reload from Disk (Ctrl+Shift+R) discards buffer edits and loads the file.
 A deleted open note stays modified; Ctrl+S restores it unless a file has appeared.
 Notes, Tags, Backlinks and Unlinked mentions follow external vault changes.
+.SH HIGHLIGHTS, CALLOUTS AND EMBEDS
+Reading view shows ==text== on a yellow background. Edit > Highlight (Ctrl+Shift+H)
+wraps or unwraps the editor selection in ==, or inserts an empty pair, as one Undo step.
+View > Highlights (Ctrl+Shift+Y) lists the note's highlights; Enter or a double-click
+jumps to one in reading view.
+A block quote starting [!note], [!tip], [!warning], [!danger], [!question] or [!quote]
+is a tinted callout with a bold title; [!type]- starts folded and a click on the
+title opens or closes it without changing the file.
+A paragraph that is only ![[Note]], ![[Note#Heading]] or ![[Note#^block]] shows that
+note, section or block indented; ![[image.png]] shows the image. Embeds follow
+changes on disk; loops, missing targets and embeds deeper than three levels show as links.
 .SH TAGS AND MENTIONS
 Inline tags and frontmatter tag: or tags: declarations appear in Tags, including
 implicit parent tags whose counts include descendant notes. F2 on a tag renames

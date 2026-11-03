@@ -95,16 +95,17 @@ escaping percent and path hashes and, outside angles, spaces and parentheses.
 0 on success; 2 on refusal, with a single refused: reason line on standard error.
 Unsafe creation targets and invalid note paths are refused. Invalid UTF-8 notes
 are ignored by search, tags and backlinks and refused by render and rename.
+.SH HIGHLIGHTS AND IMAGES
+.B lcos-notes-cli highlights VAULT NOTE
+prints the note's reading-view highlights as a JSON array of start, end and text.
+.B render
+includes an images array of embedded images, each with its offset in the text and vault-relative path.
 .SH UNSUPPORTED
 Markdown links with titles or reference syntax, following images and external
-links, transclusion, attachment viewing, NFC search, settings,
+links, Markdown image embeds, PDF embeds, attachment viewing, NFC search, settings,
 daily notes, graph view, multiple windows, GFM autolinks and footnotes, package publishing
 and signing are outside the supported scope.
 .SH SEE ALSO
 .BR lcos-notes (1)
 .SH AUTHORS
 Copyright 2026 Lee Harrington. Licensed under the Apache License, Version 2.0.
-
-.SH HIGHLIGHTS
-.B lcos-notes-cli highlights VAULT NOTE
-reports the rendered text and offsets of highlights. The render JSON includes an images array with offsets and paths.

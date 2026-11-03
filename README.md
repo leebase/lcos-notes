@@ -5,7 +5,8 @@ with Obsidian-style vaults.
 
 Your notes stay ordinary `.md` files in an ordinary folder. LCOS Notes adds
 `[[wikilinks]]`, `[Markdown links](note.md)`, block references, backlinks, tags, search, a quick switcher, safe renames that
-repair links, and a clean reading view. It has a classic menubar, a notes tree and
+repair links, and a clean reading view with GitHub-style tables and tasks, `==highlights==`,
+callouts, and embedded notes and images. It has a classic menubar, a notes tree and
 the window manager's own title bar. There are no accounts, no network access, no
 telemetry and no AI features.
 
