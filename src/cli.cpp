@@ -16,7 +16,14 @@ int main(int argc,char** argv) {
     try {
         if(argc<3) throw std::runtime_error("usage: lcos-notes-cli notes|links|mdlinks|resolve|switch|create|tags|tagged|find|backlinks|mentions|retag|rename|render|blocks|tasks VAULT [arguments]");
         std::string command=argv[1],out; Vault vault(argv[2]);
-        if(command=="notes" && argc==3) out=array(vault.notes());
+        if(command=="daily" && argc<=5) {auto now=clock_now();std::string date="today";bool create=false,date_given=false;for(int i=3;i<argc;++i){std::string a=argv[i];if(a=="--create"&&!create)create=true;else if(!date_given&&a!="--create"){date=a;date_given=true;}else throw std::runtime_error("invalid arguments");}auto d=daily(vault,now,date,create);out="{\"path\":"+quote(d.path)+",\"date\":"+quote(d.date)+",\"exists\":"+(d.exists?"true":"false")+",\"created\":"+(d.created?"true":"false")+"}";}
+        else if(command=="dailies" && argc==3){auto ds=dailies(vault,clock_now());out="[";for(auto& d:ds){if(out.size()>1)out+=",";out+="{\"path\":"+quote(d.path)+",\"date\":"+quote(d.date)+"}";}out+="]";}
+        else if(command=="unique" && argc==3){out="{\"target\":"+quote(unique_target(vault,clock_now()))+"}";}
+        else if(command=="capture" && (argc==4||(argc==5&&std::string(argv[4])=="--inbox"))){auto c=capture(vault,clock_now(),argv[3],argc==5);out="{\"path\":"+quote(c.path)+",\"line\":"+std::to_string(c.line)+",\"created\":"+(c.created?"true":"false")+"}";}
+        else if(command=="create" && argc==6 && std::string(argv[4])=="--template"){auto r=create_template(vault,argv[3],argv[5],clock_now());out="{\"path\":"+quote(r.first)+",\"created\":"+(r.second?"true":"false")+"}";}
+        else if(command=="templates" && argc==3) {clock_now();out=array(templates(vault));}
+        else if(command=="template" && argc==5) {auto now=clock_now();out="{\"text\":"+quote(template_text(vault,argv[3],argv[4],now))+"}";}
+        else if(command=="notes" && argc==3) out=array(vault.notes());
         else if(command=="highlights" && argc==4) {
             Document doc;doc.load(vault,argv[3]);auto r=vault.render(doc.path,doc.text);out="[";
             for(auto& s:r.spans) if(s.style=="highlight") {

@@ -10,6 +10,9 @@
 namespace notes {
 namespace fs = std::filesystem;
 using Maybe = std::optional<std::string>;
+struct ClockTime { int year, month, day, hour, minute, second; };
+ClockTime clock_now(bool strict = true);
+std::optional<std::string> format_time(const std::string& format, const ClockTime& time, bool* has_time = nullptr);
 std::string trim(std::string s);
 std::string fold(const std::string& s);
 std::string quote(const std::string& s);
@@ -76,7 +79,7 @@ public:
     Rename retag(std::string old, std::string target) const;
     std::vector<Backlink> mentions(const std::string& note) const;
     Rename rename(const std::string& old, std::string target) const;
-    std::pair<std::string, bool> create(std::string target) const;
+    std::pair<std::string, bool> create(std::string target, bool exact=false, const std::string& contents="") const;
 };
 class Document {
     struct stat stamp{};
@@ -90,5 +93,17 @@ public:
     void load(const Vault& vault, const std::string& relative);
     void save(const Vault& vault, const std::string& contents);
 };
+std::string validated_target(std::string target, bool note=true, bool normalize=true);
+struct Daily { std::string path, date; bool exists, created; };
+struct Capture { std::string path; int line; bool created; };
+Daily daily(const Vault&, const ClockTime&, const std::string& date="today", bool create=false);
+std::vector<Daily> dailies(const Vault&, const ClockTime&);
+std::string unique_target(const Vault&, const ClockTime&);
+Capture capture(const Vault&, const ClockTime&, const std::string&, bool inbox);
+std::pair<std::string,bool> create_template(const Vault&,const std::string&,const std::string&,const ClockTime&);
+std::string template_folder(const Vault& v);
+std::vector<std::string> templates(const Vault& v);
+std::string expand_template(const Vault& v, const std::string& text, const std::string& title, const ClockTime& now);
+std::string template_text(const Vault& v, const std::string& path, const std::string& title, const ClockTime& now);
 int heading_offset(const std::string& text, const std::string& heading);
 }

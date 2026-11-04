@@ -934,9 +934,206 @@ limit and cycles render as links), and the `highlights` command; its "Not suppor
 list drops what U8 delivers and mentions Markdown image embeds (`![alt](file.png)`) and
 PDF embeds. The CLI man page documents `highlights` and the `images` field of `render`.
 
+## U9: daily notes, templates, quick capture, timestamp names
+
+U9 adds these to U1–U8; everything above stays in force. Version 0.9.0. The designs are
+in SECOND-BRAIN.md (C1–C4); this section is the contract.
+
+### The clock
+
+Every rule below that needs "now" reads one clock: the local date and time, or, when
+the environment variable `LCOS_NOTES_NOW` is set, its value, which must be exactly
+`YYYY-MM-DDTHH:MM:SS` (a valid date from 1900-01-01 to 2099-12-31 and time; local time).
+With an invalid value the CLI refuses every U9 command (`refused: invalid LCOS_NOTES_NOW`)
+and the GUI uses the real clock.
+
+### Date formats
+
+A *format* is a string of tokens (a subset of moment.js, as Obsidian uses). Scanning left
+to right: `[` starts a literal that runs to the next `]` (both brackets dropped, the text
+between them copied); otherwise the longest token below that starts here is used, trying
+them in this order: `YYYY`, `YY`, `MMMM`, `MMM`, `MM`, `M`, `DDDD`, `DD`, `D`, `dddd`, `ddd`,
+`HH`, `H`, `mm`, `ss`; otherwise an ASCII letter makes the format *unsupported*, and any
+other character is copied. A `[` with no later `]` makes the format unsupported. Formatting
+a date and time:
+
+| Token | Output | Token | Output |
+|---|---|---|---|
+| `YYYY` | year, 4 digits | `DDDD` | day of the year, 3 digits (001–366) |
+| `YY` | year mod 100, 2 digits | `DD` / `D` | day of the month, 2 digits / no padding |
+| `MMMM` | `January` … `December` | `dddd` | `Sunday` … `Saturday` |
+| `MMM` | `Jan` … `Dec` | `ddd` | `Sun` … `Sat` |
+| `MM` / `M` | month, 2 digits / no padding | `HH` / `H` | hour 0–23, 2 digits / no padding |
+| `mm` | minute, 2 digits | `ss` | second, 2 digits |
+
+Names are English. Dates are proleptic Gregorian.
+
+### Obsidian settings
+
+Settings are read, never written, from JSON files in the vault's `.obsidian` folder:
+`daily-notes.json`, `templates.json` and `zk-prefixer.json`. A file is used only if it is a
+regular file (not a symlink), valid UTF-8 and valid JSON (RFC 8259) whose top level is an
+object; otherwise every key takes its default. Only string values are used (for a
+repeated key, the last one); a missing key or a non-string value takes its default. A
+*folder* value is trimmed of spaces and `/` at both ends; empty means the vault root.
+
+### Daily notes
+
+Settings (`daily-notes.json`): `folder` (default: the vault root), `format` (default
+`YYYY-MM-DD`; an empty or unsupported format, or one containing `HH`, `H`, `mm` or `ss`,
+uses the default) and `template` (default: none).
+
+- The daily path for date D is P(D) = folder + `/` (when the folder is not the root) +
+  the format applied to D + `.md`. A `/` from the format makes subfolders.
+- The daily note for D *exists* when a note's path equals P(D) after Unicode case folding
+  (the first such note in byte order is the one used).
+- The template value, trimmed, with one trailing `.md` removed (ASCII case-insensitive),
+  is resolved as a link target from the vault root (U1). If it is empty or unresolved,
+  there is no template.
+- Creating the daily note for D: P(D) without `.md` must pass U1's creation rules (else
+  refused with U1's reason); intermediate folders are created; the note is written
+  atomically and its text is the template expanded (Templates below) with `title` the
+  file name of P(D) without `.md` and the time D at the clock's time of day, or empty
+  without a template. A template that is not valid UTF-8 is refused. An existing note is
+  never written.
+- A note is a *daily note* with date D when D is the only date from 1900-01-01 to
+  2099-12-31 whose P(D) equals the note's path after case folding. (Formats that don't
+  determine a date, such as `MMMM`, make no daily notes.)
+
+CLI:
+- `daily VAULT [DATE] [--create]` → `{"path", "date", "exists", "created"}`. DATE is
+  `YYYY-MM-DD`, `today` (the default), `yesterday`, `tomorrow`, or `+N` / `-N` days from
+  today (N of 1–5 digits); it must be from 1900-01-01 to 2099-12-31, else refused. `path`
+  is the existing note's path, else P(DATE); `date` is `YYYY-MM-DD`; `exists` is whether the
+  note existed before the command; `created` is whether this command created it (only
+  with `--create`).
+- `dailies VAULT` → array of `{"path", "date"}` for every daily note, ordered by date and
+  then path.
+
+GUI (Go menu, after the existing items):
+- `Today's Note (Ctrl+D)`, in the editor or reading view: saves the open note first, as opening another note does (a
+  refused save does nothing else). Then it opens today's daily note, creating it if
+  needed; a refusal shows `refused: <reason>` in the statusbar. Either way, like a new note
+  (U6): it leaves reading view, puts the editor caret at the end and focuses the editor.
+  Ctrl+D is handled before the editor's own bindings.
+- `Previous Daily Note (Alt+Left)` and `Next Daily Note (Alt+Right)`, in the editor or
+  reading view: when the open note is a daily note, open the daily note with the nearest
+  earlier (later) date, as opening an existing note does (sticky reading mode, caret at
+  the start). They never create a note. Otherwise the statusbar shows `Not a daily note`,
+  `No earlier daily note` or `No later daily note` and nothing else happens. These keys
+  are handled before the editor's own bindings.
+
+### Templates
+
+Settings (`templates.json`): `folder` (default `Templates`; empty after trimming also means
+`Templates`), `dateFormat` (default `YYYY-MM-DD`) and `timeFormat` (default `HH:mm`); an
+empty or unsupported format uses the default.
+
+- The *templates* are the notes whose path starts with the folder + `/` after case
+  folding, in byte order. They stay ordinary notes (linked, tagged, searched).
+- Expanding template text for a title and a time replaces, left to right and without
+  rescanning the output, every match of the Python regular expression
+  `\{\{[ \t]*(title|date|time)[ \t]*(?::([^}\r\n]*))?\}\}` (the name matched ASCII
+  case-insensitively): `title` without a format → the title; `date` or `time` without a
+  format or with an empty one → the time in `dateFormat` or `timeFormat`; `date` or `time`
+  with a supported format → the time in that format. A match that is `title` with a format,
+  or has an unsupported format, is left as it is, as is every other byte (line endings
+  included).
+
+CLI:
+- `templates VAULT` → array of template paths.
+- `template VAULT TEMPLATE TITLE` → `{"text"}`: the note TEMPLATE (any note, valid UTF-8)
+  expanded for TITLE and the clock. Nothing is written.
+- `create VAULT TARGET --template TEMPLATE`: U1's create; a note it creates gets the
+  template expanded for its file name without `.md` and the clock. An existing note is
+  opened untouched. TEMPLATE is checked first (a missing or invalid template is refused
+  and nothing is created).
+
+GUI:
+- The New Note dialog gains, below the entry, a label `_Template:` (Alt+T focuses the
+  drop-down) and a drop-down whose first item is `None` (selected) followed by each
+  template, shown as its path after the folder + `/`, without `.md`. Up and Down on the
+  focused drop-down change the selection. Enter creates wherever the focus is in the
+  dialog (unless the drop-down's list is open). Create with a template selected creates as
+  `create --template` does.
+- Edit > `Insert Template… (Ctrl+Shift+I)`, in the editor with a note open: with no
+  templates the statusbar shows `No templates in <folder>`; otherwise a modal
+  `Insert Template` dialog lists the templates (shown as above), first row selected. Enter
+  or a double-click closes it and inserts the template, expanded for the open note's file
+  name without `.md` and the clock, at the caret (replacing a selection) as one undo step,
+  with the caret after it. Escape closes it. In reading view it does nothing.
+
+### Timestamp names
+
+Settings (`zk-prefixer.json`): `folder` (default: the vault root) and `format` (default
+`YYYYMMDDHHmm`; empty or unsupported uses the default).
+
+- The timestamp target is folder + `/` (when not the root) + the format applied to the
+  clock. If a note's path equals that target + `.md` after case folding, `-1`, `-2`, … is
+  appended: the first that is free. The target must pass U1's creation rules, else refused.
+- CLI: `unique VAULT` → `{"target"}`. Nothing is written.
+- GUI: the New Note dialog gains a button `Timestamp _Name` (Alt+N) that sets the entry's
+  text to the timestamp target and puts the caret at its end.
+
+### Quick capture
+
+Capturing text X at the clock time into a note whose text is C:
+
+- X has `\r\n` replaced by `\n`, any other `\r` removed, and then spaces, tabs and
+  newlines removed from both ends. If nothing is left, it is refused
+  (`nothing to capture`).
+- E (the line ending) is `\r\n` if C contains `\n` and its first `\n` follows `\r`, else
+  `\n`. The captured block is `- HH:mm ` + the first line, then each further line as `  ` +
+  the line (an empty line stays empty), each line followed by E.
+- The new text is C, then E if C is not empty and does not end with `\n`, then the block.
+  It is written atomically. `line` is the 1-based line number of the block's first line.
+- The *target* is today's daily note (created as `daily --create` does if missing), or with
+  the Inbox choice the note `Inbox.md` at the vault root (existing after case folding, else
+  created empty first). A target that is not valid UTF-8 is refused.
+
+CLI: `capture VAULT TEXT [--inbox]` → `{"path", "line", "created"}` (`created`: the
+target did not exist before).
+
+GUI: `lcos-notes --capture [--vault DIR]` opens only a capture window titled
+`Capture — Notes` for DIR, else the last vault; with neither it prints
+`refused: no vault` on stderr and exits 2. It does not change the last vault. The window has
+a multi-line text area (focused), radio buttons `_Today's note` and `_Inbox` (Alt+T,
+Alt+I), and buttons `_Cancel` and `_Capture`. Ctrl+Enter or Capture captures into the
+chosen target and exits 0; if the text is empty after trimming nothing happens; a refusal
+shows `refused: <reason>` in a label and the window stays. Escape or Cancel exits 0 writing
+nothing. The radio choice is remembered per vault after a successful capture, in
+`$XDG_STATE_HOME/lcos-notes/<vault-id>/capture` (default `~/.local/state`; `<vault-id>` is
+the SHA-256 hex of the vault's real path), and preselected next time (`Today's note` the
+first time).
+
+**Captures into an open note with unsaved edits.** In the main window, when the open note
+changes on disk by another program while the buffer has unsaved changes (U7), and the new
+file text is B (the text last loaded or saved), then E if B is not empty and does not end
+with `\n`, then one or more *capture blocks* (each: a line `- ` + two digits + `:` + two
+digits, optionally followed by a space and any text, then any lines that are empty or
+start with two spaces, every line ended by E, where E is taken from the new text as
+above), the blocks are appended to the end of the buffer (after E when the buffer is not
+empty and does not end with `\n`), the buffer stays modified, the caret and selection stay,
+the new file text becomes the text last loaded, and the statusbar shows
+`Captured text added; your unsaved edits are kept`. Ctrl+S then saves normally. Any other
+change follows U7.
+
+### User documentation
+
+README.md states `Version 0.9.0.`; DOCUMENTATION.md begins `This guide covers version
+0.9.0.` and documents daily notes (settings, Ctrl+D, Alt+Left/Right, `daily`, `dailies`),
+templates (folder, variables, New Note's drop-down, Insert Template, `templates`,
+`template`, `create --template`), timestamp names (`unique`) and quick capture (the window,
+binding `lcos-notes --capture` to a keyboard shortcut in the desktop's keyboard settings,
+the Inbox choice, `capture`, captures into an open note with unsaved edits), and
+`LCOS_NOTES_NOW`. Its "Not supported yet" list drops daily notes. The man pages document
+`--capture` and the new CLI commands.
+
 ## Out of scope (tracked in `BACKLOG.md`)
 
 Markdown links with titles, reference-style links, NFC in search (U5 covers inline
-Markdown note links, block references and NFC names), settings dialog,
-daily notes, graph view, multiple windows. Also out of scope: following non-local links, Markdown image embeds (`![alt](file.png)`),
+Markdown note links, block references and NFC names), settings dialog, graph view,
+multiple windows. Also out of scope for U9: non-English month and day names, moment tokens
+beyond the table, Obsidian's periodic notes (weekly, monthly), the Templater plugin's
+syntax, merging a template's frontmatter into an existing note, grabbing global keys. Also out of scope: following non-local links, Markdown image embeds (`![alt](file.png)`),
 PDF embeds, `==` coloring in the editor, GFM autolinks and footnotes, repository publishing and signing of packages.

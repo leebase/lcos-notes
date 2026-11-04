@@ -320,9 +320,11 @@ static int parent_fd(const Vault& v,const std::string& path,std::vector<fs::path
     }
     return fd;
 }
-static std::string validated_target(std::string target,bool note=true) {
+// Exact computed targets retain their bytes; user-entered targets are normalized.
+std::string validated_target(std::string target,bool note,bool normalize) {
+    if(normalize) target=trim(target);
     if(note) target=strip(target);
-    if(target.empty() || target[0]=='/') fail("empty or absolute target");
+    if(trim(target).empty() || target[0]=='/') fail("empty or absolute target");
     fold(target);
     for(const char* c=target.c_str();*c;c=g_utf8_next_char(c)) {
         auto ch=g_utf8_get_char(c);
@@ -337,10 +339,10 @@ static std::string validated_target(std::string target,bool note=true) {
     }
     return target;
 }
-std::pair<std::string,bool> Vault::create(std::string target) const {
-    const auto original_target=trim(target);
-    target=validated_target(original_target);
-    if(auto found=resolve("",original_target); found && is_note(*found)) return {*found,false};
+std::pair<std::string,bool> Vault::create(std::string target, bool exact, const std::string& contents) const {
+    const auto original_target=exact ? target : trim(target);
+    target=validated_target(original_target,!exact,!exact);
+    if(!exact) if(auto found=resolve("",original_target); found && is_note(*found)) return {*found,false};
     std::string path=target+".md";
     // Inspect the entire existing prefix before making any directories.
     fs::path current=root;
@@ -357,7 +359,12 @@ std::pair<std::string,bool> Vault::create(std::string target) const {
             current/=part; if(fs::create_directory(current)) made.push_back(current);
         }
         FD dir(parent_fd(*this,path));
-        FD file(openat(dir.n,fs::path(path).filename().c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0666));
+        auto name=fs::path(path).filename().string();
+        if(contents.empty()) {FD file(openat(dir.n,name.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0666));}
+        else {
+            std::string temp;int raw=-1;for(int i=0;i<100&&raw<0;++i){temp=".lcos-notes-create-"+std::to_string(getpid())+"-"+std::to_string(i);raw=openat(dir.n,temp.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0666);if(raw<0&&errno!=EEXIST)fail("cannot create temporary note");}FD file(raw);
+            try {size_t n=0;while(n<contents.size()){auto amount=write(file.n,contents.data()+n,contents.size()-n);if(amount<0&&errno==EINTR)continue;if(amount<=0)fail("cannot write note");n+=amount;}if(fsync(file.n)!=0)fail("cannot flush note");if(linkat(dir.n,temp.c_str(),dir.n,name.c_str(),0)!=0)fail("cannot create note");unlinkat(dir.n,temp.c_str(),0);fsync(dir.n);}catch(...){unlinkat(dir.n,temp.c_str(),0);throw;}
+        }
     } catch(...) {for(auto it=made.rbegin();it!=made.rend();++it) {std::error_code ec;fs::remove(*it,ec);} throw;}
     return {path,true};
 }

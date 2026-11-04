@@ -1,4 +1,4 @@
-This guide covers version 0.8.0. The exact rules behind each feature are in
+This guide covers version 0.9.0. The exact rules behind each feature are in
 [CONTRACT.md](CONTRACT.md).
 
 ## Vaults and notes
@@ -252,7 +252,7 @@ These are not supported yet:
 - task items inside block quotes (not recognized by the supported parser);
 - Markdown image embeds (`![alt](file.png)`), PDF embeds and viewing other attachments;
 - full-width callout boxes, callout aliases such as `info` or `todo`, highlights containing bold, italic or code, and highlights coloured in the editor;
-- a settings dialog, daily notes, a graph view and multiple windows.
+- a settings dialog, a graph view and multiple windows.
 
 Package publishing and signing are also unsupported.
 
@@ -358,3 +358,15 @@ reading view, indented:
 - The editor always shows the plain `![[...]]` source.
 - `lcos-notes-cli render` lists embedded images in an `images` array
   (`offset` in the text and vault-relative `path`).
+
+## Daily notes, templates and capture
+
+Daily notes use `.obsidian/daily-notes.json`: `folder` defaults to the vault root, `format` to `YYYY-MM-DD`, and `template` selects an optional template. Ctrl+D opens today's note; Alt+Left and Alt+Right visit existing earlier and later daily notes. The CLI commands `daily VAULT [DATE] [--create]` and `dailies VAULT` provide the same operations.
+
+Templates use `.obsidian/templates.json`; the `folder` defaults to `Templates`, and `dateFormat` and `timeFormat` control `{{date}}` and `{{time}}`. Templates also support `{{title}}` and explicit date or time formats such as `{{date:YYYY-MM-DD}}`. Choose one in the New Note drop-down or use Insert Template with Ctrl+Shift+I. The CLI provides `templates VAULT`, `template VAULT TEMPLATE TITLE`, and `create VAULT TARGET --template TEMPLATE`.
+
+Timestamp names use `.obsidian/zk-prefixer.json` (`folder` and `format`); choose Timestamp Name in New Note or run `unique VAULT`.
+
+Run `lcos-notes --capture` to open the capture window and bind that command to a keyboard shortcut in the desktop's keyboard settings. Choose today's note or Inbox; `lcos-notes-cli capture VAULT TEXT [--inbox]` provides the CLI equivalent. Captures into an open note with unsaved edits are appended to the buffer while preserving those edits.
+
+Set `LCOS_NOTES_NOW` to a local `YYYY-MM-DDTHH:MM:SS` value to override the clock.

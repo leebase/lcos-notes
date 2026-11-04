@@ -17,9 +17,9 @@ APP = "com.leebase.LcosNotes"
 def test_project_version(tmp_path):
     out = subprocess.run(["meson", "introspect", "--projectinfo", str(ROOT / "meson.build")],
                          capture_output=True, text=True, check=True, cwd=ROOT).stdout
-    assert json.loads(out)["version"] == "0.8.0"                    # CONTRACT.md U8
+    assert json.loads(out)["version"] == "0.9.0"                    # CONTRACT.md U9
     releases = [r.get("version") for r in ET.parse(ROOT / "data" / f"{APP}.metainfo.xml").getroot().iter("release")]
-    assert {"0.8.0", "0.7.0", "0.6.0", "0.5.0", "0.4.0", "0.3.0"} <= set(releases)
+    assert {"0.9.0", "0.8.0", "0.7.0", "0.6.0", "0.5.0", "0.4.0", "0.3.0"} <= set(releases)
 
 
 def _setup_dir(tmp_path, tmpdir):

@@ -216,12 +216,11 @@ def test_u8_render_blocks_tasks_highlights_match_reference(tmp_path, seed):
 # ---------------------------------------------------------------- documentation
 
 def test_user_docs_cover_u8():
+    """(The version strings are the current unit's: test_u9_core.)"""
     readme = (ROOT / "README.md").read_text()
-    assert "Version 0.8.0." in readme
-    update, install = readme.find("sudo apt update\n"), readme.find("sudo apt install ./lcos-notes_0.8.0_amd64.deb")
+    update, install = readme.find("sudo apt update\n"), readme.find("sudo apt install ./lcos-notes_")
     assert 0 <= update < install
     guide = (ROOT / "DOCUMENTATION.md").read_text()
-    assert "This guide covers version 0.8.0." in guide
     for term in ("highlight", "Edit > Highlight", "View > Highlights", "callout", "fold", "embed",
                  "image", "depth", "highlights", "![alt](file.png)", "PDF"):
         assert term.lower() in guide.lower(), term

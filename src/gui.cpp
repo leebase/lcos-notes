@@ -137,7 +137,12 @@ class Window : public Gtk::Window {
             std::error_code ec;
             if(!fs::exists(vault.root/document.path,ec)) {
                 document.mark_deleted();buffer->set_modified(true);update_title();message("Deleted on disk");
-            } else if(dirty()) message("Changed on disk; your unsaved edits are kept");
+            } else if(dirty()) {
+                bool merged=false;
+                try {Document next;next.load(vault,document.path);const auto& old=document.text;const auto& updated=next.text;auto first=updated.find('\n');std::string e=first!=std::string::npos&&first>0&&updated[first-1]=='\r'?"\r\n":"\n";std::string prefix=old;if(!prefix.empty()&&prefix.back()!='\n')prefix+=e;
+                    if(updated.compare(0,prefix.size(),prefix)==0){auto suffix=updated.substr(prefix.size());bool block=false,ok=!suffix.empty();size_t at=0;while(ok&&at<suffix.size()){auto end=suffix.find(e,at);if(end==std::string::npos){ok=false;break;}auto line=suffix.substr(at,end-at);bool head=line.size()>=7&&line[0]=='-'&&line[1]==' '&&g_ascii_isdigit(line[2])&&g_ascii_isdigit(line[3])&&line[4]==':'&&g_ascii_isdigit(line[5])&&g_ascii_isdigit(line[6])&&(line.size()==7||line[7]==' ');if(head)block=true;else if(!block||(!line.empty()&&line.compare(0,2,"  ")!=0))ok=false;at=end+e.size();}if(ok&&block){auto content=value();auto addition=(content.empty()||content.back()=='\n'?"":e)+suffix;auto insert=buffer->get_iter_at_mark(buffer->get_insert()).get_offset();auto bound=buffer->get_iter_at_mark(buffer->get_selection_bound()).get_offset();buffer->begin_user_action();auto end=buffer->end();buffer->insert(end,addition);buffer->end_user_action();buffer->select_range(buffer->get_iter_at_offset(insert),buffer->get_iter_at_offset(bound));document=next;buffer->set_modified(true);if(reading){int offset=reading_buffer->get_iter_at_mark(reading_buffer->get_insert()).get_offset();refresh_reading();reading_buffer->place_cursor(reading_buffer->get_iter_at_offset(std::min(offset,reading_buffer->get_char_count())));}update_title();message("Captured text added; your unsaved edits are kept");merged=true;}}
+                }catch(const std::exception&){}if(!merged)message("Changed on disk; your unsaved edits are kept");
+            }
             else reload_disk();
         } else if(reading) {
             int offset=reading_buffer->get_iter_at_mark(reading_buffer->get_insert()).get_offset();
@@ -554,18 +559,40 @@ class Window : public Gtk::Window {
             buffer->place_cursor(buffer->end());editor.grab_focus();position();
         }
     }
+    void today_note() {
+        if(!save()) return;
+        try {auto d=daily(vault,clock_now(false),"today",true);if(d.created) own_changes({d.path});if(reading) toggle_reading();refresh_tree();if(open_note(d.path)){buffer->place_cursor(buffer->end());editor.grab_focus();position();}}
+        catch(const std::exception& e){message(std::string("refused: ")+e.what());}
+    }
+    void adjacent_daily(bool next) {
+        try {auto days=dailies(vault,clock_now(false));auto it=std::find_if(days.begin(),days.end(),[this](const Daily& d){return d.path==document.path;});if(it==days.end()){message("Not a daily note");return;}auto current_date=it->date;if(next){do{++it;}while(it!=days.end()&&it->date==current_date);if(it==days.end()){message("No later daily note");return;}}else {while(it!=days.begin()&&it->date==current_date)--it;if(it->date==current_date){message("No earlier daily note");return;}}open_note(it->path);}
+        catch(const std::exception& e){message(std::string("refused: ")+e.what());}
+    }
+    std::string template_display(const std::string& path,const std::string& folder) {
+        size_t at=0;for(size_t i=0;i<=std::count(folder.begin(),folder.end(),'/');++i){at=path.find('/',at);if(at==std::string::npos)return path;++at;}return path.substr(at,path.size()-at-3);
+    }
+    void insert_template() {
+        if(reading||document.path.empty())return;
+        auto paths=templates(vault);if(paths.empty()){message("No templates in "+template_folder(vault));return;}
+        Gtk::Dialog dialog("Insert Template",*this,true);Gtk::ListBox list;list.set_selection_mode(Gtk::SELECTION_SINGLE);list.set_activate_on_single_click(false);auto folder=template_folder(vault);for(auto& p:paths){auto label=Gtk::manage(new Gtk::Label(template_display(p,folder)));label->set_halign(Gtk::ALIGN_START);list.append(*label);}dialog.get_content_area()->pack_start(list);dialog.add_button("_Cancel",Gtk::RESPONSE_CANCEL);dialog.add_button("_Insert",Gtk::RESPONSE_OK);dialog.set_default_response(Gtk::RESPONSE_OK);list.signal_row_activated().connect([&](Gtk::ListBoxRow*){dialog.response(Gtk::RESPONSE_OK);});dialog.show_all();list.select_row(*list.get_row_at_index(0));list.grab_focus();auto response=dialog.run();auto row=list.get_selected_row();int index=row?row->get_index():-1;dialog.hide();if(response==Gtk::RESPONSE_OK&&index>=0)try{auto text=template_text(vault,paths.at(index),fs::path(document.path).stem().string(),clock_now(false));buffer->begin_user_action();buffer->erase_selection(true,true);buffer->insert_at_cursor(text);buffer->end_user_action();editor.grab_focus();}catch(const std::exception& e){message(std::string("refused: ")+e.what());}
+    }
     void new_note() {
         Gtk::Dialog dialog("New Note",*this,true);
         Gtk::Label hint{"Name or path, for example Projects/Idea"};Gtk::Entry entry;
         dialog.get_content_area()->pack_start(hint);dialog.get_content_area()->pack_start(entry);
+        Gtk::Label template_label("_Template:",true);Gtk::ComboBoxText choices;auto paths=templates(vault);choices.append("None");auto folder=template_folder(vault);for(auto& p:paths)choices.append(template_display(p,folder));choices.set_active(0);template_label.set_mnemonic_widget(choices);choices.signal_key_press_event().connect([&](GdkEventKey* e){if(choices.property_popup_shown().get_value())return false;if(e->keyval==GDK_KEY_Down||e->keyval==GDK_KEY_Up){int n=choices.get_active_row_number()+(e->keyval==GDK_KEY_Down?1:-1);choices.set_active(std::max(0,std::min(n,static_cast<int>(paths.size()))));return true;}if(e->keyval==GDK_KEY_Return||e->keyval==GDK_KEY_KP_Enter){dialog.response(Gtk::RESPONSE_OK);return true;}return false;},false);dialog.get_content_area()->pack_start(template_label);dialog.get_content_area()->pack_start(choices);
+        Gtk::Button timestamp("Timestamp _Name",true);dialog.get_content_area()->pack_start(timestamp);timestamp.signal_clicked().connect([&]{try{entry.set_text(unique_target(vault,clock_now(false)));entry.grab_focus();entry.set_position(-1);entry.select_region(-1,-1);}catch(const std::exception& e){message(std::string("refused: ")+e.what());}});
         dialog.add_button("_Cancel",Gtk::RESPONSE_CANCEL);dialog.add_button("_Create",Gtk::RESPONSE_OK);
         dialog.set_default_response(Gtk::RESPONSE_OK);entry.set_activates_default(true);
         dialog.signal_key_press_event().connect([&](GdkEventKey* e) {
-            if(e->keyval==GDK_KEY_Escape) {dialog.response(Gtk::RESPONSE_CANCEL);return true;}return false;
+            if(e->keyval==GDK_KEY_Escape) {dialog.response(Gtk::RESPONSE_CANCEL);return true;}
+            if((e->state&GDK_MOD1_MASK)&&(e->keyval==GDK_KEY_n||e->keyval==GDK_KEY_N)){timestamp.clicked();return true;}
+            if(!choices.property_popup_shown().get_value()&&(e->keyval==GDK_KEY_Return||e->keyval==GDK_KEY_KP_Enter)){dialog.response(Gtk::RESPONSE_OK);return true;}
+            return false;
         },false);
         dialog.show_all();entry.grab_focus();auto response=dialog.run();dialog.hide();
         if(response==Gtk::RESPONSE_OK&&save()) {
-            try {open_created(vault.create(entry.get_text().raw()));}
+            try {auto i=choices.get_active_row_number();open_created(i>0?create_template(vault,entry.get_text().raw(),paths.at(i-1),clock_now(false)):vault.create(entry.get_text().raw()));}
             catch(const std::exception& e) {message(std::string("refused: ")+e.what());}
         }
         focus_content();
@@ -760,6 +787,9 @@ class Window : public Gtk::Window {
             if(tags_tree.has_focus()) return sidebar_arrow(tags_tree,tag_store,event->keyval);
             if(tree.has_focus()) return sidebar_arrow(tree,store,event->keyval);
         }
+        if(ctrl&&shift&&(event->keyval==GDK_KEY_i||event->keyval==GDK_KEY_I)){insert_template();return true;}
+        if(ctrl&&!shift&&!alt&&(event->keyval==GDK_KEY_d||event->keyval==GDK_KEY_D)) {today_note();return true;}
+        if(alt&&!ctrl&&!shift&&(event->keyval==GDK_KEY_Left||event->keyval==GDK_KEY_Right)){adjacent_daily(event->keyval==GDK_KEY_Right);return true;}
         if(ctrl&&shift&&(event->keyval==GDK_KEY_y||event->keyval==GDK_KEY_Y)) {highlights_dialog();return true;}
         if(ctrl&&shift&&(event->keyval==GDK_KEY_h||event->keyval==GDK_KEY_H)) {edit_highlight();return true;}
         if(ctrl&&shift&&(event->keyval==GDK_KEY_r||event->keyval==GDK_KEY_R)) {reload_disk();return true;}
@@ -841,7 +871,7 @@ public:
             return false;
         });
         menu("_File",{{"New Note… (Ctrl+N)",[this]{new_note();}},{"Quick Switcher (Ctrl+O)",[this]{switcher();}},{"Save (Ctrl+S)",[this]{if(!reading) save();}},{"Reload from Disk (Ctrl+Shift+R)",[this]{reload_disk();}},{"_Rename… (F2)",[this]{rename_dialog();}},{"_Quit",[this]{close();}}});
-        menu("_Edit",{{"Highlight (Ctrl+Shift+H)",[this]{edit_highlight();}},{"_Undo",[this]{if(!reading&&buffer->can_undo()) buffer->undo();}},{"_Redo",[this]{if(!reading&&buffer->can_redo()) buffer->redo();}},{"Cu_t",[this]{if(!reading) buffer->cut_clipboard(Gtk::Clipboard::get());}},{"_Copy",[this]{if(reading) reading_buffer->copy_clipboard(Gtk::Clipboard::get());else buffer->copy_clipboard(Gtk::Clipboard::get());}},{"_Paste",[this]{if(!reading) buffer->paste_clipboard(Gtk::Clipboard::get());}}});
+        menu("_Edit",{{"Insert Template… (Ctrl+Shift+I)",[this]{insert_template();}},{"Highlight (Ctrl+Shift+H)",[this]{edit_highlight();}},{"_Undo",[this]{if(!reading&&buffer->can_undo()) buffer->undo();}},{"_Redo",[this]{if(!reading&&buffer->can_redo()) buffer->redo();}},{"Cu_t",[this]{if(!reading) buffer->cut_clipboard(Gtk::Clipboard::get());}},{"_Copy",[this]{if(reading) reading_buffer->copy_clipboard(Gtk::Clipboard::get());else buffer->copy_clipboard(Gtk::Clipboard::get());}},{"_Paste",[this]{if(!reading) buffer->paste_clipboard(Gtk::Clipboard::get());}}});
         menu("_View",{{"Highlights… (Ctrl+Shift+Y)",[this]{highlights_dialog();}},{"Focus _Editor",[this]{focus_content();}}});
         auto view_item=dynamic_cast<Gtk::MenuItem*>(menubar.get_children().back());
         auto submenu=dynamic_cast<Gtk::Menu*>(view_item->get_submenu());
@@ -851,8 +881,8 @@ public:
         menu("_Go",{{"Quick Switcher (Ctrl+O)",[this]{switcher();}},{"Follow Link (Alt+Enter)",[this]{follow_current();}},
             {"Search Notes… (Ctrl+Shift+F)",[this]{search_dialog();}},{"Backlinks (Ctrl+Shift+B)",[this]{focus_backlinks();}},
             {"Notes (Ctrl+Shift+E)",[this]{focus_sidebar(false);}},{"Tags (Ctrl+Shift+T)",[this]{focus_sidebar(true);}},
-            {"Unlinked Mentions (Ctrl+Shift+M)",[this]{focus_backlinks(true);}}});
-        menu("_Help",{{"_About",[this]{Gtk::AboutDialog dialog;dialog.set_transient_for(*this);dialog.set_program_name("LCOS Notes");dialog.set_version("0.8.0");dialog.set_copyright("Copyright 2026 Lee Harrington");dialog.set_license_type(Gtk::LICENSE_CUSTOM);dialog.set_wrap_license(true);dialog.set_license("Licensed under the Apache License, Version 2.0 (the \"License\"); you may not use this program except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.");dialog.set_comments("Offline Markdown notes for LCOS and X11 desktops. Apache-2.0.");dialog.run();}}});
+            {"Unlinked Mentions (Ctrl+Shift+M)",[this]{focus_backlinks(true);}},{"Today's Note (Ctrl+D)",[this]{today_note();}},{"Previous Daily Note (Alt+Left)",[this]{adjacent_daily(false);}},{"Next Daily Note (Alt+Right)",[this]{adjacent_daily(true);}}});
+        menu("_Help",{{"_About",[this]{Gtk::AboutDialog dialog;dialog.set_transient_for(*this);dialog.set_program_name("LCOS Notes");dialog.set_version("0.9.0");dialog.set_copyright("Copyright 2026 Lee Harrington");dialog.set_license_type(Gtk::LICENSE_CUSTOM);dialog.set_wrap_license(true);dialog.set_license("Licensed under the Apache License, Version 2.0 (the \"License\"); you may not use this program except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.");dialog.set_comments("Offline Markdown notes for LCOS and X11 desktops. Apache-2.0.");dialog.run();}}});
         layout.pack_start(menubar,Gtk::PACK_SHRINK);layout.pack_start(panes);layout.pack_end(status,Gtk::PACK_SHRINK);
         tree.set_model(store);tree.append_column("Notes",columns.label);tree.set_headers_visible(false);
         tree_scroll.add(tree);tree_scroll.set_policy(Gtk::POLICY_AUTOMATIC,Gtk::POLICY_AUTOMATIC);
@@ -963,10 +993,11 @@ int main(int argc,char** argv) {
     if(!g_getenv("GDK_BACKEND")) g_setenv("GDK_BACKEND","x11",false);
     g_setenv("GTK_CSD","0",true);
     try {
-        std::string root,note;
+        std::string root,note;bool capture_mode=false;
         for(int i=1;i<argc;++i) {
             std::string arg=argv[i];
-            if(arg=="--vault" && i+1<argc && root.empty()) root=argv[++i];
+            if(arg=="--capture"&&!capture_mode) capture_mode=true;
+            else if(arg=="--vault" && i+1<argc && root.empty()) root=argv[++i];
             else if(arg.size() && arg[0]!='-' && note.empty()) note=arg;
             else throw std::runtime_error("usage: lcos-notes [--vault DIR [NOTE]]");
         }
@@ -975,11 +1006,17 @@ int main(int argc,char** argv) {
         if(root.empty()) {
             std::ifstream last(fs::path(Glib::get_user_config_dir())/"lcos-notes"/"last-vault");std::getline(last,root);
             if(!fs::is_directory(root)) {
+                if(capture_mode) throw std::runtime_error("no vault");
                 Gtk::FileChooserDialog chooser("Open Vault",Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER);
                 chooser.add_button("_Cancel",Gtk::RESPONSE_CANCEL);chooser.add_button("_Open",Gtk::RESPONSE_OK);
                 if(chooser.run()!=Gtk::RESPONSE_OK) return 0;
                 root=chooser.get_filename();
             }
+        }
+        if(capture_mode) {
+            Vault v(root);auto real=fs::canonical(v.root).string();gchar* digest=g_compute_checksum_for_string(G_CHECKSUM_SHA256,real.c_str(),real.size());const char* state_env=g_getenv("XDG_STATE_HOME");fs::path state=state_env&&*state_env?fs::path(state_env):fs::path(Glib::get_home_dir())/".local/state";auto choice_path=state/"lcos-notes"/digest/"capture";g_free(digest);
+            Gtk::Window window;window.set_title("Capture — Notes");window.set_default_size(480,300);Gtk::Box box(Gtk::ORIENTATION_VERTICAL,8);Gtk::ScrolledWindow scroll;Gtk::TextView view;scroll.add(view);box.pack_start(scroll);Gtk::RadioButton today("_Today's note",true), inbox("_Inbox",true);inbox.join_group(today);box.pack_start(today,Gtk::PACK_SHRINK);box.pack_start(inbox,Gtk::PACK_SHRINK);std::ifstream choice(choice_path);std::string saved;std::getline(choice,saved);if(saved=="inbox")inbox.set_active();Gtk::Label error;box.pack_start(error,Gtk::PACK_SHRINK);Gtk::ButtonBox buttons;Gtk::Button cancel("_Cancel",true),submit("_Capture",true);buttons.pack_start(cancel);buttons.pack_start(submit);box.pack_start(buttons,Gtk::PACK_SHRINK);window.add(box);
+            auto perform=[&]{try{auto text=view.get_buffer()->get_text().raw();capture(v,clock_now(false),text,inbox.get_active());fs::create_directories(choice_path.parent_path());std::ofstream(choice_path)<<(inbox.get_active()?"inbox":"today");window.hide();}catch(const std::exception& e){if(std::string(e.what())!="nothing to capture")error.set_text(std::string("refused: ")+e.what());}};submit.signal_clicked().connect(perform);cancel.signal_clicked().connect([&]{window.hide();});window.signal_key_press_event().connect([&](GdkEventKey* e){if(e->keyval==GDK_KEY_Escape){window.hide();return true;}if((e->state&GDK_MOD1_MASK)&&(e->keyval==GDK_KEY_i||e->keyval==GDK_KEY_I||e->keyval==GDK_KEY_t||e->keyval==GDK_KEY_T)){if(e->keyval==GDK_KEY_i||e->keyval==GDK_KEY_I)inbox.set_active();else today.set_active();view.grab_focus();return true;}if((e->state&GDK_CONTROL_MASK)&&(e->keyval==GDK_KEY_Return||e->keyval==GDK_KEY_KP_Enter)){perform();return true;}return false;},false);window.show_all();view.grab_focus();return app->run(window);
         }
         Window window(root,note);return app->run(window);
     } catch(const std::exception& e) {std::cerr<<"refused: "<<e.what()<<'\n';return 2;}

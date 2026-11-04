@@ -1,4 +1,4 @@
-.TH LCOS-NOTES-CLI 1 "November 2026" "LCOS Notes 0.8.0" "User Commands"
+.TH LCOS-NOTES-CLI 1 "November 2026" "LCOS Notes 0.9.0" "User Commands"
 .SH NAME
 lcos-notes-cli \- query and modify a local Markdown vault
 .SH SYNOPSIS
@@ -109,3 +109,19 @@ and signing are outside the supported scope.
 .BR lcos-notes (1)
 .SH AUTHORS
 Copyright 2026 Lee Harrington. Licensed under the Apache License, Version 2.0.
+
+.SH DAILY NOTES, TEMPLATES AND CAPTURE
+.B daily VAULT [DATE] [--create]
+opens or creates a daily note;
+.B dailies VAULT
+lists daily notes.
+.B templates VAULT
+lists templates;
+.B template VAULT TEMPLATE TITLE
+expands one.
+.B create VAULT TARGET --template TEMPLATE
+creates from a template.
+.B unique VAULT
+returns a timestamp target.
+.B capture VAULT TEXT [--inbox]
+appends a quick capture.
