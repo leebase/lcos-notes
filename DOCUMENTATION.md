@@ -4,6 +4,8 @@ This guide covers version 1.0.0. It includes the accepted U10 organization
 and four agreed polish improvements. Download the LCOS package and checksums from
 the [1.0.0 release](https://github.com/leebase/lcos-notes/releases/tag/v1.0.0).
 
+For a guided introduction and task-based help, read the [LCOS Notes handbook](https://nginx.leebasehome.com/lcos-notes/) or its [Markdown source](docs/handbook/index.md).
+
 ## First session
 
 1. Use the correct package for the version you intend to try; see [installation](README.md#download-and-install-lcos-10).

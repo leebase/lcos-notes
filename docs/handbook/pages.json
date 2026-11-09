@@ -1,0 +1,110 @@
+[
+  {
+    "slug": "index",
+    "title": "LCOS Notes handbook",
+    "section": "Start",
+    "description": "Find the right starting point."
+  },
+  {
+    "slug": "installation",
+    "title": "Install and open LCOS Notes",
+    "section": "Start",
+    "description": "Install and open a practice vault."
+  },
+  {
+    "slug": "quick-start",
+    "title": "Your first three notes",
+    "section": "Start",
+    "description": "Make and connect three notes in ten minutes."
+  },
+  {
+    "slug": "vaults",
+    "title": "Work with vaults",
+    "section": "Start",
+    "description": "Choose a folder and understand its files."
+  },
+  {
+    "slug": "writing",
+    "title": "Write and format",
+    "section": "Write and connect",
+    "description": "Write Markdown, tasks, highlights and callouts."
+  },
+  {
+    "slug": "links",
+    "title": "Connect notes",
+    "section": "Write and connect",
+    "description": "Use links, backlinks, mentions and embeds."
+  },
+  {
+    "slug": "reading",
+    "title": "Read a note",
+    "section": "Write and connect",
+    "description": "Use formatted Reading view."
+  },
+  {
+    "slug": "finding",
+    "title": "Find what you need",
+    "section": "Organize",
+    "description": "Use the switcher, search, tags and outline."
+  },
+  {
+    "slug": "properties",
+    "title": "Use properties and aliases",
+    "section": "Organize",
+    "description": "Add frontmatter and understand aliases."
+  },
+  {
+    "slug": "organize",
+    "title": "Organize and maintain notes",
+    "section": "Organize",
+    "description": "Rename, move, archive and supersede."
+  },
+  {
+    "slug": "daily-notes",
+    "title": "Keep daily notes",
+    "section": "Capture",
+    "description": "Open today and navigate existing daily notes."
+  },
+  {
+    "slug": "templates",
+    "title": "Make and use templates",
+    "section": "Capture",
+    "description": "Reuse text and supported variables."
+  },
+  {
+    "slug": "capture",
+    "title": "Capture an idea",
+    "section": "Capture",
+    "description": "Send a thought to today or Inbox."
+  },
+  {
+    "slug": "shortcuts",
+    "title": "Keyboard shortcuts",
+    "section": "Reference",
+    "description": "Find shortcuts for the window and dialogs."
+  },
+  {
+    "slug": "obsidian-users",
+    "title": "Coming from Obsidian",
+    "section": "Reference",
+    "description": "Understand conventions and differences."
+  },
+  {
+    "slug": "troubleshooting",
+    "title": "Troubleshooting and recovery",
+    "section": "Reference",
+    "description": "Diagnose conflicts and display issues."
+  },
+  {
+    "slug": "full-reference",
+    "title": "Complete reference",
+    "section": "Reference",
+    "description": "Read the complete LCOS Notes user guide."
+  },
+  {
+    "slug": "sources",
+    "title": "Sources and version",
+    "section": "Reference",
+    "description": "Find product and research sources."
+  }
+]

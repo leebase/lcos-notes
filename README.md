@@ -44,6 +44,8 @@ there. On other Debian-family systems, build your own package from source (below
 
 ## Using it
 
+Start with the [LCOS Notes handbook](https://nginx.leebasehome.com/lcos-notes/) for a three-note tutorial, task guides and searchable reference. The [handbook source](docs/handbook/index.md) is also available here.
+
 Start with the [user guide](DOCUMENTATION.md) for daily use and the
 [architecture guide](ARCHITECTURE.md) for the implementation and data boundaries.
 [Release notes](RELEASE-NOTES.md) describe 1.0.0 and its
