@@ -17,7 +17,8 @@ class Window : public Gtk::Window {
     Gtk::Box layout{Gtk::ORIENTATION_VERTICAL};
     Gtk::MenuBar menubar;
     Gtk::Paned panes{Gtk::ORIENTATION_HORIZONTAL};
-    Gtk::ScrolledWindow tree_scroll, editor_scroll, tags_scroll, backlinks_scroll, mentions_scroll;
+    Gtk::ScrolledWindow tree_scroll, editor_scroll, tags_scroll, backlinks_scroll, mentions_scroll, outline_scroll;
+    Gtk::TreeView outline_tree;
     Gtk::Box backlinks_box{Gtk::ORIENTATION_VERTICAL},backlinks_upper{Gtk::ORIENTATION_VERTICAL},mentions_lower{Gtk::ORIENTATION_VERTICAL};
     Gtk::Paned backlinks_split{Gtk::ORIENTATION_VERTICAL};
     Gtk::Label backlinks_label{"Backlinks"},mentions_label{"Unlinked mentions"};
@@ -26,6 +27,7 @@ class Window : public Gtk::Window {
     Gtk::Notebook sidebar;
     Gtk::Stack views;
     Gtk::ScrolledWindow reading_scroll;
+    Gtk::Box reading_container{Gtk::ORIENTATION_VERTICAL}, properties_box{Gtk::ORIENTATION_VERTICAL};
     Gtk::TextView reading_view;
     Glib::RefPtr<Gtk::TextBuffer> reading_buffer=Gtk::TextBuffer::create();
     std::map<std::string,Glib::RefPtr<Gtk::TextTag>> reading_tags;
@@ -67,6 +69,7 @@ class Window : public Gtk::Window {
     } columns;
     Glib::RefPtr<Gtk::TreeStore> store=Gtk::TreeStore::create(columns);
     Glib::RefPtr<Gtk::TreeStore> tag_store=Gtk::TreeStore::create(columns);
+    Glib::RefPtr<Gtk::ListStore> outline_store=Gtk::ListStore::create(columns);
     Glib::RefPtr<Gtk::ListStore> backlink_store=Gtk::ListStore::create(columns);
     Glib::RefPtr<Gtk::ListStore> mention_store=Gtk::ListStore::create(columns);
     bool loading=false;
@@ -201,7 +204,116 @@ class Window : public Gtk::Window {
         message("Ln "+std::to_string(at.get_line()+1)+", Col "+std::to_string(at.get_line_offset()+1));
     }
     void focus_content() {if(reading) reading_view.grab_focus();else editor.grab_focus();}
+    void refresh_outline() {
+        outline_store->clear();
+        if(document.path.empty()) return;
+        try { for(const auto& h:headings(value())) {
+            auto row=outline_store->append();
+            (*row)[columns.label]=std::string((h.level-1)*2,' ')+h.text;
+            (*row)[columns.line]=h.line;
+        }} catch(const std::exception&) {}
+    }
+    void activate_outline() {
+        auto row=outline_tree.get_selection()->get_selected();
+        if(row) jump((*row)[columns.line],1);
+    }
+    void relocate_note(bool archive) {
+        if(document.path.empty()) return;
+        std::string folder;
+        if(archive) {
+            if(document.path.compare(0,8,"Archive/")==0) {message("Archive refused: already archived");return;}
+            folder="Archive";
+        } else {
+            Gtk::Dialog dialog("Move Note",*this,true);Gtk::Entry entry;
+            dialog.get_content_area()->pack_start(entry);dialog.add_button("_Cancel",Gtk::RESPONSE_CANCEL);
+            dialog.add_button("_Move",Gtk::RESPONSE_OK);dialog.set_default_response(Gtk::RESPONSE_OK);
+            entry.set_activates_default(true);dialog.show_all();entry.grab_focus();
+            if(dialog.run()!=Gtk::RESPONSE_OK) return;
+            folder=entry.get_text().raw();
+        }
+        auto prefix=archive?std::string("Archive/"):(folder.empty()?std::string{}:folder+"/");
+        auto target=prefix+(archive?document.path:fs::path(document.path).filename().string());
+        auto label=archive?"Archive refused: ":"Move refused: ";
+        if(!save(label)) return;
+        try {
+            auto old=document.path;int offset=buffer->get_iter_at_mark(buffer->get_insert()).get_offset();
+            auto result=vault.rename(old,target);offset=result.map_caret(offset);
+            own_changes({old,result.to});document=Document{};refresh_tree();
+            if(open_note(result.to)) {auto at=buffer->get_iter_at_offset(std::min(offset,buffer->get_char_count()));buffer->place_cursor(at);if(reading) place_reading_caret();}
+        } catch(const std::exception& e) {message(std::string(label)+e.what());}
+    }
+    void supersede_dialog() {
+        if(document.path.empty()) return;
+        Gtk::Dialog dialog("Supersede With",*this,true);Gtk::Entry entry;
+        dialog.get_content_area()->pack_start(entry);dialog.add_button("_Cancel",Gtk::RESPONSE_CANCEL);
+        dialog.add_button("_Supersede",Gtk::RESPONSE_OK);dialog.set_default_response(Gtk::RESPONSE_OK);
+        entry.set_activates_default(true);dialog.show_all();entry.grab_focus();
+        if(dialog.run()!=Gtk::RESPONSE_OK) return;
+        if(!save("Supersede refused: ")) return;
+        try {auto path=document.path;supersede(vault,path,entry.get_text().raw());own_changes({path,entry.get_text().raw()});reload_disk();}
+        catch(const SupersedePartialSave& e) {
+            // OLD's permitted first write belongs to this operation. Update both
+            // monitor and Document stamps before presenting the durable refusal.
+            own_changes({document.path});reload_disk();
+            message(std::string("Supersede refused: ")+e.what());
+        }
+        catch(const std::exception& e) {message(std::string("Supersede refused: ")+e.what());}
+    }
+    void refresh_properties() {
+        for(auto child:properties_box.get_children()) properties_box.remove(*child);
+        if(document.path.empty()) return;
+        auto props=properties(value());
+        auto add_link=[&](Gtk::Box& box,const std::string& label,std::function<void()> action) {
+            auto button=Gtk::manage(new Gtk::LinkButton("about:blank",label));
+            button->set_halign(Gtk::ALIGN_START);
+            if(auto label_widget=dynamic_cast<Gtk::Label*>(button->get_child()))
+                label_widget->set_markup("<span foreground=\"#205ca8\" underline=\"single\">"+Glib::Markup::escape_text(label)+"</span>");
+            button->signal_activate_link().connect([action]{action();return true;},false);
+            box.pack_start(*button,Gtk::PACK_SHRINK);
+        };
+        for(const auto& p:props) if(p.key=="superseded_by"&&!p.unsupported) {
+            auto values=p.list?p.values:std::vector<std::string>{p.scalar};
+            for(const auto& v:values) for(const auto& l:parse(v)) {
+                auto target=vault.resolve(document.path,l.target);
+                if(target&&is_note(*target)) add_link(properties_box,"Superseded by "+l.target,[this,target,l]{open_note(*target,l.heading);});
+            }
+        }
+        if(!props.empty()) {
+            auto heading=Gtk::manage(new Gtk::Label("Properties"));heading->set_halign(Gtk::ALIGN_START);properties_box.pack_start(*heading,Gtk::PACK_SHRINK);
+            for(const auto& p:props) {
+                auto row=Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
+                auto key=Gtk::manage(new Gtk::Label(p.key+": "));row->pack_start(*key,Gtk::PACK_SHRINK);
+                auto values=p.list?p.values:std::vector<std::string>{p.scalar};
+                bool action=!p.unsupported&&(p.key=="tags"||p.key=="tag"||p.key=="alias"||p.key=="aliases");
+                if(action&&!p.list&&(p.key=="tags"||p.key=="tag")) {
+                    values=scalar_property_tags(value(),p);
+                    if(values.empty()) {values={p.scalar};action=false;}
+                }
+                bool first_value=true;
+                if(action) for(const auto& v:values) {
+                    if(!first_value) {auto separator=Gtk::manage(new Gtk::Label(", "));row->pack_start(*separator,Gtk::PACK_SHRINK);}
+                    first_value=false;
+                    if(p.key=="tag"||p.key=="tags") add_link(*row,v,[this,v]{
+                        auto tag=v;if(!tag.empty()&&tag[0]=='#')tag.erase(0,1);
+                        sidebar.set_current_page(1);
+                        for(auto r=tag_store->children().begin();r!=tag_store->children().end();++r) if(fold(Glib::ustring((*r)[columns.text]).raw())==fold(tag)) {
+                            auto path=tag_store->get_path(r);tags_tree.expand_row(path,false);
+                            if(!r->children().empty()) tags_tree.set_cursor(tag_store->get_path(r->children().begin()));
+                            tags_tree.grab_focus();break;
+                        }
+                    });
+                    else add_link(*row,v,[this,v]{auto target=vault.resolve(document.path,v);if(target&&is_note(*target)) open_note(*target);});
+                } else {
+                    std::string text;for(const auto& v:values) {if(!text.empty())text+=", ";text+=v;}
+                    auto label=Gtk::manage(new Gtk::Label(text));label->set_halign(Gtk::ALIGN_START);row->pack_start(*label,Gtk::PACK_SHRINK);
+                }
+                properties_box.pack_start(*row,Gtk::PACK_SHRINK);
+            }
+        }
+        properties_box.show_all();
+    }
     void refresh_reading() {
+        refresh_properties();
         rendered=document.path.empty()?Render{}:vault.render(document.path,value());
         reading_images.clear();
         reading_buffer->set_text(rendered.text);
@@ -225,10 +337,18 @@ class Window : public Gtk::Window {
         fold_closed.clear();
         std::set<int> boundaries{0,reading_buffer->get_char_count()};
         std::set<int> callout_boundaries;
+        std::map<const decltype(rendered.spans)::value_type*,int> callout_starts;
         for(auto& s:rendered.spans) {
             if(s.style=="folded") {fold_closed.push_back(true);continue;}
             if(s.style.compare(0,8,"callout-")==0 && s.style!="callout-title") {
-                callout_boundaries.insert(s.start);callout_boundaries.insert(s.end);continue;
+                // Callouts are blocks. GTK reads paragraph backgrounds at the
+                // paragraph start, including any recursively generated list prefix.
+                // Expand only the paint range; semantic text/link/fold ranges stay put.
+                auto at=reading_buffer->get_iter_at_offset(s.start), line=at;
+                line.set_line_offset(0);
+                int start=line.get_offset();
+                callout_starts[&s]=start;
+                callout_boundaries.insert(start);callout_boundaries.insert(s.end);continue;
             }
             reading_buffer->apply_tag(reading_tags.at(s.style),reading_buffer->get_iter_at_offset(s.start),reading_buffer->get_iter_at_offset(s.end));
         }
@@ -239,7 +359,7 @@ class Window : public Gtk::Window {
             int end=*it;const decltype(rendered.spans)::value_type* inner=nullptr;
             for(const auto& s:rendered.spans)
                 if(s.style.compare(0,8,"callout-")==0 && s.style!="callout-title" &&
-                   s.start<=start && end<=s.end &&
+                   callout_starts.at(&s)<=start && end<=s.end &&
                    (!inner || s.end-s.start<inner->end-inner->start)) inner=&s;
             if(inner) reading_buffer->apply_tag(reading_tags.at(inner->style),
                 reading_buffer->get_iter_at_offset(start),reading_buffer->get_iter_at_offset(end));
@@ -327,7 +447,7 @@ class Window : public Gtk::Window {
         if(reading) follow_reading(reading_buffer->get_iter_at_mark(reading_buffer->get_insert()).get_offset());
         else follow(buffer->get_iter_at_mark(buffer->get_insert()).get_offset());
     }
-    bool save() {
+    bool save(const std::string& refusal_prefix={}) {
         if(document.path.empty()) return true;
         try {
             bool wrote=dirty(),restoring=document.deleted();document.save(vault,value());
@@ -335,7 +455,7 @@ class Window : public Gtk::Window {
             if(restoring) refresh_tree(true);
             refresh_u2();update_title();position();return true;
         }
-        catch(const std::exception& e) {message(e.what());return false;}
+        catch(const std::exception& e) {message(refusal_prefix+e.what());return false;}
     }
     void refresh_tree(bool preserve=false) {
         std::set<std::string> expanded;std::string selected;
@@ -445,7 +565,7 @@ class Window : public Gtk::Window {
                 (*row)[columns.path]=b.source;(*row)[columns.line]=b.line;(*row)[columns.col]=b.col;
             }
         } catch(const std::exception& e) {message(e.what());}
-        style_links();
+        style_links();refresh_outline();
     }
     void jump(int line,int col) {
         auto at=buffer->get_iter_at_line(line-1);at.forward_chars(col-1);
@@ -579,8 +699,9 @@ class Window : public Gtk::Window {
     void new_note() {
         Gtk::Dialog dialog("New Note",*this,true);
         Gtk::Label hint{"Name or path, for example Projects/Idea"};Gtk::Entry entry;
+        hint.set_alignment(0.0, 0.5);
         dialog.get_content_area()->pack_start(hint);dialog.get_content_area()->pack_start(entry);
-        Gtk::Label template_label("_Template:",true);Gtk::ComboBoxText choices;auto paths=templates(vault);choices.append("None");auto folder=template_folder(vault);for(auto& p:paths)choices.append(template_display(p,folder));choices.set_active(0);template_label.set_mnemonic_widget(choices);choices.signal_key_press_event().connect([&](GdkEventKey* e){if(choices.property_popup_shown().get_value())return false;if(e->keyval==GDK_KEY_Down||e->keyval==GDK_KEY_Up){int n=choices.get_active_row_number()+(e->keyval==GDK_KEY_Down?1:-1);choices.set_active(std::max(0,std::min(n,static_cast<int>(paths.size()))));return true;}if(e->keyval==GDK_KEY_Return||e->keyval==GDK_KEY_KP_Enter){dialog.response(Gtk::RESPONSE_OK);return true;}return false;},false);dialog.get_content_area()->pack_start(template_label);dialog.get_content_area()->pack_start(choices);
+        Gtk::Label template_label("_Template:",true);template_label.set_alignment(0.0, 0.5);Gtk::ComboBoxText choices;auto paths=templates(vault);choices.append("None");auto folder=template_folder(vault);for(auto& p:paths)choices.append(template_display(p,folder));choices.set_active(0);template_label.set_mnemonic_widget(choices);choices.signal_key_press_event().connect([&](GdkEventKey* e){if(choices.property_popup_shown().get_value())return false;if(e->keyval==GDK_KEY_Down||e->keyval==GDK_KEY_Up){int n=choices.get_active_row_number()+(e->keyval==GDK_KEY_Down?1:-1);choices.set_active(std::max(0,std::min(n,static_cast<int>(paths.size()))));return true;}if(e->keyval==GDK_KEY_Return||e->keyval==GDK_KEY_KP_Enter){dialog.response(Gtk::RESPONSE_OK);return true;}return false;},false);dialog.get_content_area()->pack_start(template_label);dialog.get_content_area()->pack_start(choices);
         Gtk::Button timestamp("Timestamp _Name",true);dialog.get_content_area()->pack_start(timestamp);timestamp.signal_clicked().connect([&]{try{entry.set_text(unique_target(vault,clock_now(false)));entry.grab_focus();entry.set_position(-1);entry.select_region(-1,-1);}catch(const std::exception& e){message(std::string("refused: ")+e.what());}});
         dialog.add_button("_Cancel",Gtk::RESPONSE_CANCEL);dialog.add_button("_Create",Gtk::RESPONSE_OK);
         dialog.set_default_response(Gtk::RESPONSE_OK);entry.set_activates_default(true);
@@ -665,8 +786,9 @@ class Window : public Gtk::Window {
         auto box=dialog.get_content_area();box->pack_start(hint,Gtk::PACK_SHRINK);box->pack_start(entry,Gtk::PACK_SHRINK);box->pack_start(scroll);
         auto update=[&]() {
             matches->clear();
-            try {for(auto& path:vault.search(entry.get_text().raw())) {
-                auto row=matches->append();(*row)[columns.label]=path;(*row)[columns.path]=path;
+            std::map<std::string,std::string> matched_aliases;
+            try {for(auto& path:vault.search(entry.get_text().raw(),&matched_aliases)) {
+                auto row=matches->append();(*row)[columns.label]=matched_aliases.count(path)?matched_aliases.at(path)+" → "+path:path;(*row)[columns.path]=path;
             }} catch(const std::exception& e) {message(e.what());}
             auto query=entry.get_text().raw();auto resolved=vault.resolve("",trim(query));
             if(!query.empty()&&(!resolved||!is_note(*resolved))) {
@@ -793,6 +915,8 @@ class Window : public Gtk::Window {
         if(ctrl&&shift&&(event->keyval==GDK_KEY_y||event->keyval==GDK_KEY_Y)) {highlights_dialog();return true;}
         if(ctrl&&shift&&(event->keyval==GDK_KEY_h||event->keyval==GDK_KEY_H)) {edit_highlight();return true;}
         if(ctrl&&shift&&(event->keyval==GDK_KEY_r||event->keyval==GDK_KEY_R)) {reload_disk();return true;}
+        if(event->keyval==GDK_KEY_F6) {relocate_note(false);return true;}
+        if(ctrl&&shift&&(event->keyval==GDK_KEY_o||event->keyval==GDK_KEY_O)) {sidebar.set_current_page(2);if(!outline_store->children().empty()) outline_tree.set_cursor(outline_store->get_path(outline_store->children().begin()));outline_tree.grab_focus();return true;}
         if(event->keyval==GDK_KEY_F2) {rename_dialog(true);return true;}
         if(ctrl&&shift&&(event->keyval==GDK_KEY_e||event->keyval==GDK_KEY_E)) {focus_sidebar(false);return true;}
         if(ctrl&&shift&&(event->keyval==GDK_KEY_t||event->keyval==GDK_KEY_T)) {focus_sidebar(true);return true;}
@@ -806,6 +930,7 @@ class Window : public Gtk::Window {
         if(reading && ctrl&&(event->keyval==GDK_KEY_z||event->keyval==GDK_KEY_Z||event->keyval==GDK_KEY_y||event->keyval==GDK_KEY_Y)) return true;
         bool enter=event->keyval==GDK_KEY_Return || event->keyval==GDK_KEY_KP_Enter;
         if(enter&&!alt&&!ctrl) {
+            if(outline_tree.has_focus()) {activate_outline();return true;}
             if(tree.has_focus()) {activate_tree();return true;}
             if(tags_tree.has_focus()) {activate_tag();return true;}
             if(backlinks_tree.has_focus()) {open_backlink();return true;}
@@ -870,7 +995,7 @@ public:
             },100);
             return false;
         });
-        menu("_File",{{"New Note… (Ctrl+N)",[this]{new_note();}},{"Quick Switcher (Ctrl+O)",[this]{switcher();}},{"Save (Ctrl+S)",[this]{if(!reading) save();}},{"Reload from Disk (Ctrl+Shift+R)",[this]{reload_disk();}},{"_Rename… (F2)",[this]{rename_dialog();}},{"_Quit",[this]{close();}}});
+        menu("_File",{{"New Note… (Ctrl+N)",[this]{new_note();}},{"Quick Switcher (Ctrl+O)",[this]{switcher();}},{"Save (Ctrl+S)",[this]{if(!reading) save();}},{"Reload from Disk (Ctrl+Shift+R)",[this]{reload_disk();}},{"_Rename… (F2)",[this]{rename_dialog();}},{"Move Note… (F6)",[this]{relocate_note(false);}},{"_Archive Note",[this]{relocate_note(true);}},{"S_upersede With…",[this]{supersede_dialog();}},{"_Quit",[this]{close();}}});
         menu("_Edit",{{"Insert Template… (Ctrl+Shift+I)",[this]{insert_template();}},{"Highlight (Ctrl+Shift+H)",[this]{edit_highlight();}},{"_Undo",[this]{if(!reading&&buffer->can_undo()) buffer->undo();}},{"_Redo",[this]{if(!reading&&buffer->can_redo()) buffer->redo();}},{"Cu_t",[this]{if(!reading) buffer->cut_clipboard(Gtk::Clipboard::get());}},{"_Copy",[this]{if(reading) reading_buffer->copy_clipboard(Gtk::Clipboard::get());else buffer->copy_clipboard(Gtk::Clipboard::get());}},{"_Paste",[this]{if(!reading) buffer->paste_clipboard(Gtk::Clipboard::get());}}});
         menu("_View",{{"Highlights… (Ctrl+Shift+Y)",[this]{highlights_dialog();}},{"Focus _Editor",[this]{focus_content();}}});
         auto view_item=dynamic_cast<Gtk::MenuItem*>(menubar.get_children().back());
@@ -882,11 +1007,13 @@ public:
             {"Search Notes… (Ctrl+Shift+F)",[this]{search_dialog();}},{"Backlinks (Ctrl+Shift+B)",[this]{focus_backlinks();}},
             {"Notes (Ctrl+Shift+E)",[this]{focus_sidebar(false);}},{"Tags (Ctrl+Shift+T)",[this]{focus_sidebar(true);}},
             {"Unlinked Mentions (Ctrl+Shift+M)",[this]{focus_backlinks(true);}},{"Today's Note (Ctrl+D)",[this]{today_note();}},{"Previous Daily Note (Alt+Left)",[this]{adjacent_daily(false);}},{"Next Daily Note (Alt+Right)",[this]{adjacent_daily(true);}}});
-        menu("_Help",{{"_About",[this]{Gtk::AboutDialog dialog;dialog.set_transient_for(*this);dialog.set_program_name("LCOS Notes");dialog.set_version("0.9.0");dialog.set_copyright("Copyright 2026 Lee Harrington");dialog.set_license_type(Gtk::LICENSE_CUSTOM);dialog.set_wrap_license(true);dialog.set_license("Licensed under the Apache License, Version 2.0 (the \"License\"); you may not use this program except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.");dialog.set_comments("Offline Markdown notes for LCOS and X11 desktops. Apache-2.0.");dialog.run();}}});
+        menu("_Help",{{"_About",[this]{Gtk::AboutDialog dialog;dialog.set_transient_for(*this);dialog.set_program_name("LCOS Notes");dialog.set_version("1.0.0");dialog.set_copyright("Copyright 2026 Lee Harrington");dialog.set_license_type(Gtk::LICENSE_CUSTOM);dialog.set_wrap_license(true);dialog.set_license("Licensed under the Apache License, Version 2.0 (the \"License\"); you may not use this program except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.");dialog.set_comments("Offline Markdown notes for LCOS and X11 desktops. Apache-2.0.");dialog.run();}}});
         layout.pack_start(menubar,Gtk::PACK_SHRINK);layout.pack_start(panes);layout.pack_end(status,Gtk::PACK_SHRINK);
         tree.set_model(store);tree.append_column("Notes",columns.label);tree.set_headers_visible(false);
         tree_scroll.add(tree);tree_scroll.set_policy(Gtk::POLICY_AUTOMATIC,Gtk::POLICY_AUTOMATIC);
         sidebar.append_page(tree_scroll,"Notes");sidebar.append_page(tags_scroll,"Tags");
+        outline_tree.set_model(outline_store);outline_tree.append_column("Outline",columns.label);outline_tree.set_headers_visible(false);outline_scroll.add(outline_tree);sidebar.append_page(outline_scroll,"Outline");
+        outline_tree.signal_row_activated().connect([this](const Gtk::TreeModel::Path&,Gtk::TreeViewColumn*){activate_outline();});
         panes.pack1(sidebar,false,false);panes.pack2(content,true,false);panes.set_position(190);
         content.pack1(views,true,false);content.pack2(backlinks_box,false,false);content.set_position(std::max(100,width-502));
         tags_tree.set_model(tag_store);tags_tree.append_column("Tags",columns.label);tags_tree.set_headers_visible(false);
@@ -913,7 +1040,7 @@ public:
         unresolved_tag=buffer->create_tag("wikilink-unresolved");unresolved_tag->property_foreground()="#a33b24";unresolved_tag->property_underline()=Pango::UNDERLINE_SINGLE;
         editor.set_buffer(buffer);editor.set_show_line_numbers(true);editor.set_wrap_mode(Gtk::WRAP_WORD_CHAR);editor.set_monospace(true);
         editor_scroll.add(editor);editor_scroll.set_policy(Gtk::POLICY_AUTOMATIC,Gtk::POLICY_AUTOMATIC);
-        views.add(editor_scroll,"editor");views.add(reading_scroll,"reading");
+        views.add(editor_scroll,"editor");reading_container.pack_start(properties_box,Gtk::PACK_SHRINK);reading_container.pack_start(reading_scroll);views.add(reading_container,"reading");
         reading_view.set_buffer(reading_buffer);reading_view.set_editable(false);reading_view.set_cursor_visible(true);
         reading_view.signal_size_allocate().connect([this](Gtk::Allocation&) {
             resize_reading_images();
@@ -924,12 +1051,12 @@ public:
         for(auto name:{"h1","h2","h3","h4","h5","h6","em","strong","code","codeblock","quote","url","link","unresolved","rule","strike","task","done","table","th","highlight","callout-note","callout-tip","callout-warning","callout-danger","callout-question","callout-quote","callout-title","folded","image","embed"}) reading_tags[name]=reading_buffer->create_tag(name);
         for(int i=1;i<=6;++i) {auto tag=reading_tags["h"+std::to_string(i)];tag->property_weight()=Pango::WEIGHT_BOLD;tag->property_scale()=1.7-0.1*i;}
         reading_tags["highlight"]->property_background()="#FFE066";
-        reading_tags["callout-note"]->property_background()="#E3EEFB";
-        reading_tags["callout-tip"]->property_background()="#E2F5E7";
-        reading_tags["callout-warning"]->property_background()="#FFF1D6";
-        reading_tags["callout-danger"]->property_background()="#FBE2E2";
-        reading_tags["callout-question"]->property_background()="#EFE6FA";
-        reading_tags["callout-quote"]->property_background()="#EEEEEE";
+        reading_tags["callout-note"]->property_paragraph_background()="#E3EEFB";
+        reading_tags["callout-tip"]->property_paragraph_background()="#E2F5E7";
+        reading_tags["callout-warning"]->property_paragraph_background()="#FFF1D6";
+        reading_tags["callout-danger"]->property_paragraph_background()="#FBE2E2";
+        reading_tags["callout-question"]->property_paragraph_background()="#EFE6FA";
+        reading_tags["callout-quote"]->property_paragraph_background()="#EEEEEE";
         reading_tags["callout-title"]->property_weight()=Pango::WEIGHT_BOLD;
         reading_tags["folded"]->property_invisible()=true;
         reading_tags["strike"]->property_strikethrough()=true;
@@ -972,7 +1099,7 @@ public:
         tree.signal_row_activated().connect([this](const Gtk::TreeModel::Path&,Gtk::TreeViewColumn*) {activate_tree();});
         buffer->signal_changed().connect([this]{if(!loading) {
             update_title();styling.disconnect();
-            styling=Glib::signal_timeout().connect([this]{style_links();return false;},180);
+            styling=Glib::signal_timeout().connect([this]{style_links();refresh_outline();return false;},180);
         }});
         // Cursor-position notifications include edits that move the insert mark without mark-set.
         buffer->property_cursor_position().signal_changed().connect([this]{position();});

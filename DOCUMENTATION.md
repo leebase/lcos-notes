@@ -1,21 +1,69 @@
-This guide covers version 0.9.0. The exact rules behind each feature are in
-[CONTRACT.md](CONTRACT.md).
+# LCOS Notes user guide
+
+This guide covers version 1.0.0. It includes the accepted U10 organization
+and four agreed polish improvements. Download the LCOS package and checksums from
+the [1.0.0 release](https://github.com/leebase/lcos-notes/releases/tag/v1.0.0).
+
+## First session
+
+1. Use the correct package for the version you intend to try; see [installation](README.md#download-and-install-lcos-10).
+2. Start with a separate folder containing a few synthetic Markdown notes. Choose
+   that folder at startup or use `lcos-notes --vault /path/to/test-notes`.
+3. Create a note with Ctrl+N, save with Ctrl+S, and write a `[[link]]` to another note.
+4. Use Ctrl+E to read it. Use Ctrl+O to switch notes, Ctrl+Shift+F to search content,
+   and Ctrl+D to open today's daily note.
+5. Before using Move, Archive or Supersede on valuable notes, keep an independent
+   backup. These operations change ordinary vault files; an atomic save is not a backup.
+
+## Optional language fonts
+
+LCOS Notes uses installed system fonts. For Chinese, Japanese and Korean coverage, install fonts-noto-cjk.
+
+On Devuan/LCOS, an administrator can install the optional package:
+
+```sh
+sudo apt update
+sudo apt install --no-install-recommends fonts-noto-cjk
+fc-cache -f
+```
+
+Close and reopen Notes after adding fonts. This is optional operating-system
+coverage, not a mandatory Notes dependency. If administrative installation is not
+available, regular fonts from the same package can be installed for your account
+under `~/.local/share/fonts/`, followed by `fc-cache -f`. The live LCOS acceptance
+check used this standard per-user route without changing Notes or the system
+package database. Do not run these Linux package commands on macOS.
+
+To check for a font covering 猫 (U+732B):
+
+```sh
+fc-list ':charset=732b' family
+```
+
+An empty result means no installed font advertises that glyph. `fc-match sans`
+alone does not prove coverage. A box labeled 732B can indicate missing system font
+coverage even when the note's UTF-8 text and other characters are intact.
 
 ## Vaults and notes
 
 A **vault** is any folder. Every file ending in `.md` (lower case) anywhere inside it
 is a **note**. Other files, such as images and PDFs, are **attachments**. Hidden files
 and folders (names starting with `.`, such as `.obsidian/`, `.trash/` and `.git/`) and
-symbolic links are ignored completely. An existing Obsidian vault works as it is:
-LCOS Notes never writes into `.obsidian/` and never adds files of its own to the vault.
+symbolic links are excluded from note traversal. Supported hidden configuration
+files are read explicitly as described under daily notes and templates. An existing Obsidian vault works as it is:
+LCOS Notes never writes into `.obsidian/` or adds hidden application metadata to the vault.
+User-requested note creation and capture still create ordinary Markdown files.
 
 Notes are plain UTF-8 text. LCOS Notes saves exactly what you typed: it keeps
 Windows line endings (CRLF) if the file had them, and adds or removes no final
 newline. A note that is not valid UTF-8 can't be edited and is skipped by search,
 tags, backlinks and rename.
 
-The only setting LCOS Notes stores is the last vault you opened, in
-`~/.config/lcos-notes/last-vault`.
+The last opened vault is stored under `$XDG_CONFIG_HOME/lcos-notes/last-vault`
+(default `~/.config/lcos-notes/last-vault`). Capture remembers its target under
+`$XDG_STATE_HOME/lcos-notes/` (default `~/.local/state/lcos-notes/`), keyed by vault.
+The app reads supported Obsidian daily-note/template/timestamp settings without
+writing those hidden files. Use an independent backup for your Markdown vault.
 
 ## Starting
 
@@ -25,7 +73,7 @@ lcos-notes --vault ~/Notes          # a specific vault
 lcos-notes --vault ~/Notes Home.md  # a vault and a note (path inside the vault)
 ```
 
-The window has a menubar (File, Edit, View, Go, Help), the **Notes** and **Tags**
+The window has a menubar (File, Edit, View, Go, Help), the **Notes**, **Tags** and **Outline**
 tabs on the left, the editor in the middle, **Backlinks** on the right and a
 statusbar showing `Ln N, Col M`. The title shows the note's name, with ` *` while it
 has unsaved changes. The window sizes itself to fit your screen; 1024×768 works.
@@ -192,6 +240,32 @@ Ctrl+Shift+E shows Notes and selects the open note (first row if none).
 Ctrl+Shift+T shows Tags and selects its first row. Arrows navigate; Enter
 activates or expands a row; F2 renames the selected row.
 
+## Outline and note organization
+
+Ctrl+Shift+O opens the Outline and selects its first heading. Enter or a
+double-click jumps to that source heading in the editor or reading view. The
+outline follows edits. F6 opens Move Note: enter a vault-relative destination
+folder, or leave it empty for the root. File > Archive Note moves the note under
+`Archive/`, retaining its original path. Both commands save pending changes first
+and refuse collisions. Escape cancels the Move dialog.
+
+Move and Archive save pending editor changes before relocating. If the file was
+changed externally, they refuse the operation and keep your pending buffer;
+explicit Reload from Disk discards it. Archive refuses an already archived note.
+Supported links are updated to continue resolving to the moved document; collisions
+and unsafe paths are refused rather than overwritten.
+
+File > Supersede With… accepts an existing vault-relative note path and writes
+reciprocal `superseded_by` and `supersedes` properties. Each document is saved
+atomically, but the pair is not a transaction; a failure on the second save may
+leave the first changed. Reading view shows parsed properties above the body;
+resolved supersession references appear as links above the table. Tags and aliases
+in the table can be followed, subject to normal navigation and save safeguards.
+A note's real name wins over an alias during link resolution. Ambiguous Properties
+aliases do not guess a destination. Quick Switcher also displays alias results as
+`alias → path`; an alias row can currently appear before an exact filename, so check
+the destination before activating a result.
+
 ## Renaming (F2)
 
 **F2**, or File > Rename…, renames or moves the open note. Type a new name or path,
@@ -251,13 +325,13 @@ These are not supported yet:
 - following images or non-local links, and NFC normalization in search;
 - task items inside block quotes (not recognized by the supported parser);
 - Markdown image embeds (`![alt](file.png)`), PDF embeds and viewing other attachments;
-- full-width callout boxes, callout aliases such as `info` or `todo`, highlights containing bold, italic or code, and highlights coloured in the editor;
+- callout aliases such as `info` or `todo`, and highlights coloured in the editor;
 - a settings dialog, a graph view and multiple windows.
 
-Package publishing and signing are also unsupported.
+An apt repository and package signing are not provided.
 
 The Go menu exposes Quick Switcher, Follow Link, Search Notes, Backlinks, Notes,
-Tags and Unlinked Mentions, with their keyboard shortcuts.
+Tags, Outline and Unlinked Mentions, with their keyboard shortcuts.
 
 
 ## Tables, tasks and strikethrough
@@ -295,8 +369,10 @@ external reloads.
 
 In reading view, `==text==` shows the text on a yellow background and hides the
 `==` marks. Highlights work in paragraphs, list items, table cells, headings and callouts,
-and can contain links. They can't contain bold, italic or code: `==a **b** c==`
-stays as written. They never span two paragraphs. `==` followed by a
+and can contain links, bold, italic, strikethrough and inline code: `==a **b** c==`
+highlights the whole phrase while retaining bold. Inline code retains its code style
+but never supplies highlight delimiters. Highlights do not cross source line breaks,
+raw HTML or paragraph boundaries. `==` followed by a
 space, or a closing `==` preceded by one, does not count, so `== spaced ==`, a lone
 `==` and `====` stay as written.
 
@@ -330,7 +406,11 @@ uses the note colour. Without a title, the type is the title (`[!tip]` shows "Ti
   resets when the note is re-rendered.
 - `[!tip]+` starts open (the same as no sign).
 - Nested quotes and lists inside a callout keep their formatting.
-- The tint sits behind the text. Full-width callout boxes are not drawn yet.
+- The tint fills the available reading column and follows window resizing. It stays
+  within the callout, preserving nested colors, folding and ordinary paragraphs.
+- Titles retain their tint when callouts occur inside nested or mixed-marker lists.
+- A folded callout can leave an extra tinted blank row below its title. This
+  disclosed appearance limitation is retained in the accepted candidate.
 
 ## Embeds
 
@@ -370,3 +450,28 @@ Timestamp names use `.obsidian/zk-prefixer.json` (`folder` and `format`); choose
 Run `lcos-notes --capture` to open the capture window and bind that command to a keyboard shortcut in the desktop's keyboard settings. Choose today's note or Inbox; `lcos-notes-cli capture VAULT TEXT [--inbox]` provides the CLI equivalent. Captures into an open note with unsaved edits are appended to the buffer while preserving those edits.
 
 Set `LCOS_NOTES_NOW` to a local `YYYY-MM-DDTHH:MM:SS` value to override the clock.
+
+The CLI provides `props VAULT NOTE` for supported frontmatter fields,
+`aliases VAULT` for declared aliases, and `headings VAULT NOTE` for the
+Markdown outline. `supersede VAULT OLD NEW` adds reciprocal supersession
+properties after validating both notes. Each changed note is saved atomically;
+the two saves do not form a single transaction.
+
+
+## Known limits and future scope
+
+An extreme synthetic 80 KB note with 20,000 unmatched highlight markers showed
+about 2.0 seconds of packaged reading-view latency versus about 1.1 seconds in
+accepted U10; ordinary 80 KB text was about 0.28 seconds in both. These are recorded
+measurements, not a response-time guarantee for every computer or note. No further
+highlight optimization is included in this candidate.
+
+Mouse-only reliability through Mac Screen Sharing remains unverified. Some input
+paths can focus a control without activating it; Return or Space on the focused
+control can help establish what actually happened. The live P3 retest used native
+libvirt input and does not certify another input path.
+
+Ranked search, related notes, a task dashboard/query blocks and vault health are
+U11 work after 1.0. Graph/resurfacing features are U12, also after 1.0. Semantic
+recall M5 requires Lee's decision. The native Mac app is parked. None is silently
+included in this release boundary. [Retained scope](RELEASE-NOTES.md#documented-limitations).

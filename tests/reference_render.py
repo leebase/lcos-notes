@@ -131,24 +131,77 @@ class _R:
         return "".join(out), spans, found
 
     def inlines(self, node, nodes=None):
-        """CONTRACT.md U8: runs of sibling text nodes are scanned for ==highlights==."""
-        nodes = list(_children(node)) if nodes is None else nodes
-        parts, run = [], []
-        for c in nodes + [None]:
-            if c is not None and _kind(c) == "text":
-                run.append(_literal(c))
+        """D534 reference: pair plaintext delimiters over inline AST atoms.
+
+        Code is content but cannot supply delimiters; breaks/HTML split regions.
+        Ancestor identities preserve formatting independently of delimiter removal.
+        """
+        atoms, serial = [], [0]
+        region = [0]
+        def fresh():
+            serial[0] += 1
+            return serial[0]
+        def walk(children, ancestors=()):
+            run = None
+            for child in children:
+                kind = _kind(child)
+                if kind == "text":
+                    if run is None:
+                        run = fresh()
+                    atoms.extend((ch, run, region[0], ancestors, False) for ch in _literal(child))
+                    continue
+                run = None
+                if kind in ("softbreak", "linebreak", "html_inline"):
+                    region[0] += 1
+                    value = " " if kind == "softbreak" else "\n" if kind == "linebreak" else _literal(child)
+                    atoms.extend((ch, None, region[0], ancestors, kind == "html_inline") for ch in value)
+                    region[0] += 1
+                elif kind == "code":
+                    marks = ancestors + ((fresh(), "code"),)
+                    atoms.extend((ch, None, region[0], marks, True) for ch in _literal(child))
+                else:
+                    style = {"emph": "em", "strong": "strong", "link": "url",
+                             "image": "url", "strikethrough": "strike"}.get(kind)
+                    marks = ancestors + (((fresh(), style),) if style else ())
+                    walk(list(_children(child)), marks)
+        walk(list(_children(node)) if nodes is None else nodes)
+        def pair(i):
+            return (i + 1 < len(atoms) and atoms[i][0] == atoms[i+1][0] == "="
+                    and atoms[i][1] is not None and atoms[i][1] == atoms[i+1][1])
+        erased, ranges = set(), []
+        i = 0
+        while i + 2 < len(atoms):
+            if not (pair(i) and atoms[i+2][2] == atoms[i][2]
+                    and atoms[i+2][0] != "=" and not _space(atoms[i+2][0])):
+                i += 1
                 continue
-            if run:
-                parts.append(self.highlights("".join(run)))
-                run = []
-            if c is not None:
-                parts.append(self.inline(c))
-        text, spans, links = "", [], []
-        for t, s, l in parts:
-            off = len(text)
-            text += t
-            spans += [(a + off, b + off, st) for a, b, st in s]
-            links += [(a + off, b + off, r, res) for a, b, r, res in l]
+            j = i + 3
+            while j + 1 < len(atoms) and atoms[j][2] == atoms[i][2]:
+                if pair(j) and not _space(atoms[j-1][0]):
+                    break
+                j += 1
+            if j + 1 < len(atoms) and atoms[j][2] == atoms[i][2] and pair(j):
+                erased.update((i, i+1, j, j+1))
+                ranges.append((i+2, j))
+                i = j + 2
+            else:
+                i += 1
+        text, spans, links, styles, offsets = "", [], [], {}, [0]
+        for index, (char, _run, _region, marks, raw) in enumerate(atoms):
+            if index not in erased:
+                t, sp, found = (self.literal(char), [], []) if raw else self.text(char)
+                off = len(text)
+                text += t
+                spans.extend((a+off, b+off, st) for a,b,st in sp)
+                links.extend((a+off, b+off, link, res) for a,b,link,res in found)
+                for identity, style in marks:
+                    if identity not in styles:
+                        styles[identity] = [off, len(text), style]
+                    else:
+                        styles[identity][1] = len(text)
+            offsets.append(len(text))
+        spans.extend(tuple(v) for v in styles.values())
+        spans.extend((offsets[a], offsets[b], "highlight") for a,b in ranges)
         return text, spans, links
 
     def highlights(self, s):

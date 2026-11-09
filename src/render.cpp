@@ -17,8 +17,8 @@ namespace notes {
 namespace {
 int count(const std::string& s) { return g_utf8_strlen(s.data(), s.size()); }
 std::string utf8(gunichar c) { char b[6]; auto n=g_unichar_to_utf8(c,b);return std::string(b,n); }
-void append(Render& out, Render part) {
-    int offset=count(out.text);out.text+=part.text;
+void append_at(Render& out, Render part, int offset) {
+    out.text+=part.text;
     for(auto image:part.images) {image.offset+=offset;out.images.push_back(image);}
     for(auto t:part.tasks) {t.offset+=offset;out.tasks.push_back(t);}
     for(auto b:part.blocks) {b.offset+=offset;out.blocks.push_back(b);}
@@ -26,6 +26,7 @@ void append(Render& out, Render part) {
     for(auto s:part.layout_spans) {s.start+=offset;s.end+=offset;out.layout_spans.push_back(s);}
     for(auto l:part.links) {l.start+=offset;l.end+=offset;out.links.push_back(l);}
 }
+void append(Render& out, Render part) { append_at(out,std::move(part),count(out.text)); }
 void style(Render& r,const std::string& name) {
     Span span{0,count(r.text),name};r.spans.push_back(span);
     if(name=="embed"||name=="quote") r.layout_spans.push_back(span);
@@ -91,50 +92,88 @@ struct Renderer {
         }
         return r;
     }
-    Render text_run(const std::string& text) const {
-        std::vector<gunichar> chars;
-        for(const char* p=text.data();p<text.data()+text.size();p=g_utf8_next_char(p)) chars.push_back(g_utf8_get_char(p));
-        auto slice=[&](size_t a,size_t b) {std::string s;for(;a<b;++a) s+=utf8(chars[a]);return s;};
-        Render r;size_t plain=0,i=0;
-        while(i+2<chars.size()) {
-            if(chars[i]!='='||chars[i+1]!='='||chars[i+2]=='='||g_unichar_isspace(chars[i+2])) {++i;continue;}
-            size_t j=i+3;
-            while(j+1<chars.size()&&!(chars[j]=='='&&chars[j+1]=='='&&!g_unichar_isspace(chars[j-1]))) ++j;
-            if(j+1>=chars.size()) {++i;continue;}
-            append(r,expand(slice(plain,i),false));
-            auto part=expand(slice(i+2,j),false);style(part,"highlight");append(r,std::move(part));
-            i=j+2;plain=i;
-        }
-        append(r,expand(slice(plain,chars.size()),false));return r;
-    }
-    Render inline_range(cmark_node* c,cmark_node* stop=nullptr) const {
+    // Flatten one inline container while retaining the provenance of each
+    // character. Only adjacent characters in the same plaintext run can form
+    // a delimiter; code and opaque link displays remain visible but inert.
+    Render inline_range(cmark_node* first,cmark_node* stop=nullptr) const {
         Render r;
-        while(c && c!=stop) {
-            if(cmark_node_get_type(c)==CMARK_NODE_TEXT) {
-                std::string run;
-                do {run+=literal(c);c=cmark_node_next(c);} while(c&&c!=stop&&cmark_node_get_type(c)==CMARK_NODE_TEXT);
-                append(r,text_run(run));
-            } else {append(r,inline_node(c));c=cmark_node_next(c);}
+        std::vector<int> provenance, positions{0};
+        std::vector<gunichar> chars;
+        int run_id=0;
+        auto add = [&](Render part,int id,gunichar atom=0) {
+            int start=positions.back();
+            if(atom) {
+                chars.push_back(atom);provenance.push_back(id);
+                positions.push_back(positions.back()+count(part.text));
+            } else {
+                for(const char* p=part.text.data();p<part.text.data()+part.text.size();p=g_utf8_next_char(p)) {
+                    chars.push_back(g_utf8_get_char(p));provenance.push_back(id);
+                    positions.push_back(positions.back()+1);
+                }
+            }
+            append_at(r,std::move(part),start);
+        };
+        std::function<void(cmark_node*,cmark_node*)> visit;
+        visit = [&](cmark_node* node,cmark_node* limit) {
+            while(node && node!=limit) {
+                auto type=cmark_node_get_type(node);
+                if(type==CMARK_NODE_TEXT) {
+                    std::string run;
+                    do {run+=literal(node);node=cmark_node_next(node);}
+                    while(node && node!=limit && cmark_node_get_type(node)==CMARK_NODE_TEXT);
+                    ++run_id;
+                    for(const char* p=run.data();p<run.data()+run.size();p=g_utf8_next_char(p)) {
+                        auto ch=g_utf8_get_char(p);
+                        add(expand(utf8(ch),false),run_id,ch);
+                    }
+                    continue;
+                }
+                if(type==CMARK_NODE_CODE) {
+                    auto part=expand(literal(node),true);style(part,"code");add(std::move(part),0);
+                } else if(type==CMARK_NODE_HTML_INLINE || type==CMARK_NODE_SOFTBREAK || type==CMARK_NODE_LINEBREAK) {
+                    Render part;
+                    if(type==CMARK_NODE_HTML_INLINE) part=expand(literal(node),true);
+                    else part.text=type==CMARK_NODE_SOFTBREAK?" ":"\n";
+                    add(std::move(part),-1);
+                } else {
+                    int start=positions.back();
+                    visit(cmark_node_first_child(node),nullptr);
+                    int end=positions.back();
+                    std::string name;
+                    if(std::string(cmark_node_get_type_string(node))=="strikethrough") name="strike";
+                    else if(type==CMARK_NODE_EMPH) name="em";
+                    else if(type==CMARK_NODE_STRONG) name="strong";
+                    else if(type==CMARK_NODE_LINK||type==CMARK_NODE_IMAGE) name="url";
+                    if(!name.empty()) r.spans.push_back({start,end,name});
+                }
+                node=cmark_node_next(node);
+            }
+        };
+        visit(first,stop);
+        std::vector<bool> remove(positions.back(),false);
+        std::vector<std::pair<int,int>> highlights;
+        auto pair_at=[&](size_t i) {return i+1<chars.size() && chars[i]=='=' && chars[i+1]=='=' && provenance[i]>0 && provenance[i]==provenance[i+1];};
+        for(size_t i=0;i+2<chars.size();) {
+            if(!pair_at(i)||provenance[i+2]<0||chars[i+2]=='='||g_unichar_isspace(chars[i+2])) {++i;continue;}
+            size_t j=i+3;
+            while(j+1<chars.size() && provenance[j]>=0 && !(pair_at(j)&&!g_unichar_isspace(chars[j-1]))) ++j;
+            if(j+1>=chars.size()||provenance[j]<0) {++i;continue;}
+            remove[positions[i]]=remove[positions[i+1]]=remove[positions[j]]=remove[positions[j+1]]=true;
+            highlights.emplace_back(positions[i+2],positions[j]);i=j+2;
         }
+        std::vector<int> offset(remove.size()+1,0);
+        std::string text;size_t index=0;
+        for(const char* p=r.text.data();p<r.text.data()+r.text.size();p=g_utf8_next_char(p),++index) {
+            offset[index+1]=offset[index]+!remove[index];
+            if(!remove[index]) text+=utf8(g_utf8_get_char(p));
+        }
+        for(auto& span:r.spans) {span.start=offset[span.start];span.end=offset[span.end];}
+        for(auto& link:r.links) {link.start=offset[link.start];link.end=offset[link.end];}
+        for(auto h:highlights) r.spans.push_back({offset[h.first],offset[h.second],"highlight"});
+        r.text=std::move(text);
         return r;
     }
     Render inlines(cmark_node* n) const {return inline_range(cmark_node_first_child(n));}
-    Render inline_node(cmark_node* n) const {
-        auto type=cmark_node_get_type(n);Render r;
-        switch(type) {
-        case CMARK_NODE_TEXT:return expand(literal(n),false);
-        case CMARK_NODE_SOFTBREAK:r.text=" ";return r;
-        case CMARK_NODE_LINEBREAK:r.text="\n";return r;
-        case CMARK_NODE_CODE:r=expand(literal(n),true);style(r,"code");return r;
-        case CMARK_NODE_HTML_INLINE:return expand(literal(n),true);
-        default:r=inlines(n);break;
-        }
-        if(std::string(cmark_node_get_type_string(n))=="strikethrough") style(r,"strike");
-        if(type==CMARK_NODE_EMPH) style(r,"em");
-        if(type==CMARK_NODE_STRONG) style(r,"strong");
-        if(type==CMARK_NODE_LINK||type==CMARK_NODE_IMAGE) style(r,"url");
-        return r;
-    }
     Render blocks(cmark_node* n,const std::string& sep) const {
         Render r;bool first=true;
         for(auto c=cmark_node_first_child(n);c;c=cmark_node_next(c)) {

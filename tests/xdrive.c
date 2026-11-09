@@ -18,6 +18,7 @@
  */
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
+#include <X11/Xproto.h>
 #include <X11/XKBlib.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/XTest.h>
@@ -52,33 +53,61 @@ static int has_prop(Window w, const char *name)
   return ok;
 }
 
-static void print_title(Window w)
+/* A window returned by XQueryTree can disappear before its next request.
+ * Scope the exception to this exact window and the three read requests used by
+ * enumeration. All other X errors retain Xlib's previous fatal handler. */
+static Window inspected_window;
+static int vanished;
+static XErrorHandler previous_handler;
+
+static int enumeration_error(Display *display, XErrorEvent *error)
 {
-  Atom type; int fmt; unsigned long n, after; unsigned char *data = NULL;
-  Atom name = XInternAtom(dpy, "_NET_WM_NAME", False);
-  Atom utf8 = XInternAtom(dpy, "UTF8_STRING", False);
-  if (XGetWindowProperty(dpy, w, name, 0, 4096, False, utf8, &type, &fmt, &n, &after, &data) == Success && data) {
-    fwrite(data, 1, n, stdout);
-    XFree(data);
+  if (error->error_code == BadWindow && error->resourceid == inspected_window &&
+      (error->request_code == X_GetProperty || error->request_code == X_GetWindowAttributes ||
+       error->request_code == X_QueryTree)) {
+    vanished = 1;
+    return 0;
   }
+  return previous_handler(display, error);
 }
 
 static void walk(Window w, unsigned long pid)
 {
   Window root, parent, *kids = NULL; unsigned int nk = 0;
   unsigned long p;
-  if (get_cardinal(w, "_NET_WM_PID", &p) && p == pid && has_prop(w, "WM_STATE")) {
-    XWindowAttributes at;
-    if (XGetWindowAttributes(dpy, w, &at) && at.map_state == IsViewable) {
-      printf("%lu\t%d\t%d\t", (unsigned long)w, has_prop(w, "_NET_FRAME_EXTENTS"), has_prop(w, "_GTK_FRAME_EXTENTS"));
-      print_title(w);
-      printf("\n");
-    }
+  int matched = 0, frame = 0, csd = 0;
+  unsigned char *title = NULL;
+  unsigned long title_len = 0, after; Atom type; int fmt;
+  XWindowAttributes at;
+
+  /* Finish prior requests before installing the temporary error handler. */
+  XSync(dpy, False);
+  inspected_window = w;
+  vanished = 0;
+  previous_handler = XSetErrorHandler(enumeration_error);
+  if (get_cardinal(w, "_NET_WM_PID", &p) && p == pid && has_prop(w, "WM_STATE") &&
+      XGetWindowAttributes(dpy, w, &at) && at.map_state == IsViewable) {
+    frame = has_prop(w, "_NET_FRAME_EXTENTS");
+    csd = has_prop(w, "_GTK_FRAME_EXTENTS");
+    Atom name = XInternAtom(dpy, "_NET_WM_NAME", False);
+    Atom utf8 = XInternAtom(dpy, "UTF8_STRING", False);
+    XGetWindowProperty(dpy, w, name, 0, 4096, False, utf8,
+                       &type, &fmt, &title_len, &after, &title);
+    matched = 1;
   }
-  if (XQueryTree(dpy, w, &root, &parent, &kids, &nk)) {
-    for (unsigned int i = 0; i < nk; i++) walk(kids[i], pid);
-    if (kids) XFree(kids);
+  XQueryTree(dpy, w, &root, &parent, &kids, &nk);
+  XSync(dpy, False);
+  XSetErrorHandler(previous_handler);
+
+  /* Emit only a complete row after all reads for this window succeeded. */
+  if (!vanished && matched) {
+    printf("%lu\t%d\t%d\t", (unsigned long)w, frame, csd);
+    if (title) fwrite(title, 1, title_len, stdout);
+    printf("\n");
   }
+  if (title) XFree(title);
+  if (!vanished) for (unsigned int i = 0; i < nk; i++) walk(kids[i], pid);
+  if (kids) XFree(kids);
 }
 
 static void client_message(Window w, const char *type, long l0, long l1)

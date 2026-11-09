@@ -1137,3 +1137,150 @@ multiple windows. Also out of scope for U9: non-English month and day names, mom
 beyond the table, Obsidian's periodic notes (weekly, monthly), the Templater plugin's
 syntax, merging a template's frontmatter into an existing note, grabbing global keys. Also out of scope: following non-local links, Markdown image embeds (`![alt](file.png)`),
 PDF embeds, `==` coloring in the editor, GFM autolinks and footnotes, repository publishing and signing of packages.
+
+## U10: organize and memory conventions
+
+U10 adds to U1–U9 and preserves their outputs, including `render` text, offsets,
+spans and links. Project/package/About version is 0.10.0; prior release history
+remains. Properties and banners are GUI widgets outside the rendered body. No
+ranked-search currency ordering is added (U11 owns ranked search).
+
+### Properties and aliases
+
+`props VAULT NOTE` returns a JSON object in order of each key's last occurrence.
+A frontmatter block is as U2; without one the object is empty. Supported keys
+start at column 1 and match `[A-Za-z_][A-Za-z0-9_-]*:`. Trim surrounding spaces
+on values; matching single or double outer quotes are removed without escape
+processing. A scalar is a string (including an empty string); `[a, b]` is a
+list split on every comma, including commas inside quotes, with the same trimming/unquoting, `[]` is empty (the existing U2 flow-list convention). An empty
+value followed by indented `- ` lines is a block list; the lines' values use
+the same trimming/unquoting. Other indented continuations and inline `{...}`
+are unsupported: return their raw text including the key's value and continuation
+lines joined by `\n`, excluding the key and colon and the final line ending.
+Duplicate keys use the last value, and their last occurrence determines order.
+There is no YAML type coercion, nesting, escape or comment interpretation.
+
+`aliases VAULT` returns `[{"alias": string, "path": path}]` ordered by path,
+then declaration order. `alias` and `aliases` each contribute scalar or list
+values; ignore empty values and duplicate normalized aliases within one note.
+After existing U5 note and attachment resolution has failed, a target with no
+slash is matched to aliases using NFC then Unicode casefold. Exactly one distinct
+note resolves; multiple notes are ambiguous and unresolved. `resolve` adds
+`"via":"alias"` only on a successful alias fallback; other results remain
+byte-compatible. `links`, backlinks, opening and creation use that resolution.
+Rename never edits alias declarations, and preserves an alias-target link unchanged
+when it still resolves to the same note. Quick switcher matches aliases under U1
+ranking; each note occurs once, ranked by its best matching name or alias, with
+name winning ties. Alias matches display `Alias → path` in the GUI; CLI `switch`
+continues to return paths. Mentions include aliases under U6's prose and whole-word
+rules, de-duplicated at the same source position; output remains in U6 order.
+
+### Outline and organization
+
+`headings VAULT NOTE` returns `[{"level": N, "text": string, "line": N}]`
+in source order. Extract cmark-gfm ATX and setext heading nodes outside frontmatter;
+text is their plain inline content, without markup or closing ATX hashes. Source
+line is 1-based. Empty/non-UTF-8 handling follows `render`. This addition does
+not alter existing heading-link or embed selection rules.
+
+The Outline tab beside Notes and Tags displays headings indented by level, refreshes
+within 300 ms of edits, and Ctrl+Shift+O focuses its first row and takes precedence over Ctrl+O. Enter or double-click
+navigates to that heading in editor and reading view; focus remains on the destination.
+File > Move Note… (F6) opens `Move Note`, with an entry containing the destination
+folder relative to the vault (initially empty and focused; empty means root); Enter moves the current note under
+its same filename using U2 rename, creating valid intermediate directories. Escape
+cancels. File > Archive Note (menu mnemonic A) moves it to `Archive/<original path>`. Archive of an
+already archived path is refused, as is a collision; no overwrite. Both save pending
+edits first and honor all existing save/rename refusals and link identity guarantees.
+A save conflict leaves the modified buffer open and shows `Move refused: Changed on disk; not saved` or `Archive refused: Changed on disk; not saved` in the statusbar.
+
+### Supersession
+
+`supersede VAULT OLD NEW` requires two distinct existing UTF-8 notes. Validate both
+paths, both documents and the complete planned edits before any write; an opening frontmatter delimiter without a closing delimiter, unsupported continuations for either affected key, or
+repeated affected keys refuse with exit 2 and no changes. Write only `superseded_by`
+in OLD and `supersedes` in NEW, each as a quoted full vault-relative wikilink
+without `.md`, e.g. `superseded_by: "[[Folder/New]]"`. Existing supported affected
+key including its block list is replaced; other bytes remain identical. If there is
+no frontmatter prepend `---`, the key, `---`, each with the document's newline
+style (CRLF if first newline is CRLF, otherwise LF). Existing frontmatter receives
+the key immediately before its closing delimiter. Preserve all unrelated bytes and
+line endings. Each changed document uses atomic save; a failure after the first
+replacement can leave that first document changed, since there is no multi-file
+transaction. Concurrent external writers are outside this operation's scope.
+Success outputs `{"old": OLD, "new": NEW}`. File > Supersede With… (menu mnemonic U) opens
+`Supersede With`, an initially empty focused entry for an existing vault-relative note path; Enter saves
+pending edits then performs the same operation, Escape cancels. Refusal leaves the
+current buffer intact and reports `Supersede refused: <reason>` in the statusbar; a save conflict shows `Supersede refused: Changed on disk; not saved`.
+
+In reading view show a Properties table, headed `Properties`, above the body, one row per parsed field,
+list values joined by comma-space; tags and aliases are underlined in the U2 link color and clickable: a tag opens the Tags tab with that tag expanded and its first matching note selected; an alias follows that alias via normal resolution and navigation safeguards, and an ambiguous alias does not navigate.
+A `superseded_by` scalar or list of wikilinks gives a `Superseded by <target>`
+separate banner widget per resolvable target above the table, underlined in the U2 link color; clicking opens the target via normal
+save/navigation safeguards. Unresolved values are displayed in Properties only.
+
+Relocation guarantees that supported wikilinks in `superseded_by` and `supersedes`
+scalar or list values are references. Existing treatment of other frontmatter remains unchanged.
+Apply U2 identity and refusal rules to those links for note, folder and archive
+relocation, changing only necessary link target bytes and preserving surrounding
+quotes, separators, whitespace, line endings and all unrelated frontmatter bytes.
+Prevalidate the complete relocation before writes; refusal leaves the vault unchanged.
+
+### Folder Chief and documentation
+
+README documents opening a Folder Chief `brain/` as a vault and the supported
+properties, links and supersession conventions, noting that hidden directories
+including `.sqlite-mem/` and `.obsidian/` are never written. DOCUMENTATION and man
+pages describe the new commands, shortcuts and dialogs. The acceptance fixture is
+synthetic content in an authentic existing Folder Chief decision-record format;
+it contains no real private brain or secret. No dependency on Folder Chief itself.
+
+
+## 1.0 polish: reading presentation and U9 clarity (D534)
+
+This finite amendment supersedes only U8's sibling-text-run highlight restriction and
+text-only callout background. U1–U10 otherwise remain in force, including the accepted
+U10 repairs. The candidate stays version 0.10.0 until separate release preparation.
+
+### Highlights across formatting
+
+Within one inline paragraph/heading/table cell/callout title or body, scan the cmark
+inline tree in visible order across emphasis, strong, strikethrough and link containers.
+Use U8's existing opening/closing rules, left-to-right and non-nesting. Delimiters must
+be consecutive characters from a plaintext run; formatting cannot manufacture a `==`
+pair from separated characters. A code span's contents may lie inside an outer
+highlight, retaining its code style, but never supply highlight delimiters. Raw HTML,
+soft breaks, hard breaks and block boundaries remain barriers. Fenced/indented code
+remains literal. Source backslash semantics remain cmark's existing semantics.
+
+Remove the matched delimiters, preserve all other text, inline formatting and link
+identity, and emit one contiguous highlight span over the resulting content. Offsets
+remain Unicode codepoint offsets into actual rendered text, and highlights CLI/dialog
+entries derive from those spans. Multiple and Unicode highlights, highlighted links,
+headings, callouts, lists, tables and embedded notes use the same behavior. Delimiters
+inside link display text expanded from an opaque existing wikilink placeholder never
+become new syntax. No highlight is allowed to consume neighboring paragraphs or code
+blocks. No Markdown image support or editor coloring is added.
+
+### Full-width callouts
+
+In reading view the existing six callout kinds retain their exact U8 colors and
+fold/open behavior, with background extending across the available reading column,
+not merely behind glyphs. Adapt to resizing; do not tint the whole view or the ordinary
+paragraph immediately before/after a callout. Short, wrapped, adjacent and nested
+callouts must preserve their text, links and title activation. Innermost kind wins
+where ranges overlap, as in U8. Plain quotes and embedded/list margins retain their
+existing behavior. No new runtime dependency or HTML renderer.
+
+### U9 clarity
+
+Reformat src/u9.cpp into readable conventional blocks without changing tokens or
+runtime behavior (comments/whitespace only). In New Note, both the name/path hint and
+Template label align to the start/left of their shared available width. Preserve the
+Template mnemonic, selection/default and all capture/template/day behavior.
+
+### Limits and existing backlog
+
+No U11/U12/M5, Mac scope, mouse-input redesign, switcher ranking, alias tooltip change
+or release/merge. The last two remain separate polish candidates in the Chief record.
+Unsupported baseline Markdown features retain their tracked BACKLOG entry conditions.

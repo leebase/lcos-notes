@@ -42,12 +42,18 @@ SUITES = {
                  "tests/test_u8_core.py"],
     "u9core": ["tests/test_u9_core.py"],
     "u9gui": ["tests/test_u9_gui.py"],
-    "acceptance": ["tests/test_core.py", "tests/test_gui.py", "tests/test_u2_core.py", "tests/test_u2_gui.py",
+    "u10core": ["tests/test_u10_core.py"],
+    "u10gui": ["tests/test_u10_gui.py"],
+    "u10": ["tests/test_u10_core.py", "tests/test_u10_gui.py"],
+    "callouts": ["tests/test_callout_paragraph_boundary_gui.py", "tests/test_callout_list_repair_gui.py", "tests/test_callout_direct_list_gui.py"],
+    "polish": ["tests/test_callout_paragraph_boundary_gui.py", "tests/test_polish_core.py", "tests/test_polish_gui.py", "tests/test_callout_list_repair_gui.py", "tests/test_callout_direct_list_gui.py"],
+    "acceptance": ["tests/test_callout_paragraph_boundary_gui.py", "tests/test_callout_direct_list_gui.py", "tests/test_callout_list_repair_gui.py", "tests/test_polish_core.py", "tests/test_polish_gui.py","tests/test_core.py", "tests/test_gui.py", "tests/test_u2_core.py", "tests/test_u2_gui.py",
                    "tests/test_u3_core.py", "tests/test_u3_gui.py", "tests/test_u3_pkg.py",
                    "tests/test_u4_core.py", "tests/test_u4_gui.py", "tests/test_u4_pkg.py",
                    "tests/test_u5_core.py", "tests/test_u5_gui.py", "tests/test_u6_core.py", "tests/test_u6_gui.py",
                    "tests/test_u7_core.py", "tests/test_u7_gui.py", "tests/test_u8_core.py", "tests/test_u8_gui.py",
-                   "tests/test_u9_core.py", "tests/test_u9_gui.py"],
+                   "tests/test_u9_core.py", "tests/test_u9_gui.py",
+                   "tests/test_u10_core.py", "tests/test_u10_gui.py"],
 }
 
 if __name__ == "__main__":

@@ -265,36 +265,74 @@ static Maybe resolve_files(const std::vector<std::string>& all, const std::strin
     for(size_t i=dot+1;i<name.size();++i) if(!g_ascii_isalnum(name[i])) return {};
     return match(target,false);
 }
-Maybe Vault::resolve(const std::string& source, std::string target) const {
-    return resolve_files(files(),source,target);
+// Each operation owns its namespace and lazy alias index. Nothing survives a
+// public call, so later edits, creates, moves and deletions are observed afresh.
+using AliasDeclarations = std::vector<std::pair<std::string,std::string>>;
+static AliasDeclarations aliases_for_files(const Vault&,const std::vector<std::string>&);
+struct Resolution {
+    const Vault& vault;
+    std::vector<std::string> files;
+    std::optional<std::map<std::string,Maybe>> alias_targets;
+    explicit Resolution(const Vault& v):vault(v),files(v.files()) {}
+    Maybe resolve(const std::string& source,const std::string& target,bool* via_alias=nullptr) {
+        if(via_alias) *via_alias=false;
+        auto result=resolve_files(files,source,target);
+        if(result||target.empty()||target.find('/')!=std::string::npos) return result;
+        if(!alias_targets) {
+            alias_targets.emplace();
+            for(const auto& alias:aliases_for_files(vault,files)) {
+                auto inserted=alias_targets->emplace(fold(alias.first),Maybe(alias.second));
+                if(!inserted.second&&inserted.first->second!=Maybe(alias.second))
+                    inserted.first->second.reset();
+            }
+        }
+        auto found=alias_targets->find(fold(target));
+        if(found==alias_targets->end()) return {};
+        if(found->second&&via_alias) *via_alias=true;
+        return found->second;
+    }
+    std::vector<Link> links(const std::string& source,const std::string& text,bool wiki_only=false) {
+        auto out=wiki_only?parse(text):parse_all(text);
+        for(auto& l:out) l.resolved=l.markdown?resolve_markdown(files,source,l.target):resolve(source,l.target);
+        return out;
+    }
+};
+Maybe Vault::resolve(const std::string& source,std::string target,bool* via_alias) const {
+    Resolution operation(*this);return operation.resolve(source,target,via_alias);
 }
-std::vector<Link> Vault::links(const std::string& source, const std::string& text) const {
-    auto all=files();auto out=parse(text); for(auto& l:out) l.resolved=resolve_files(all,source,l.target); return out;
+std::vector<Link> Vault::links(const std::string& source,const std::string& text) const {
+    Resolution operation(*this);return operation.links(source,text,true);
 }
 std::vector<Link> Vault::mdlinks(const std::string& source,const std::string& text) const {
     auto all=files();auto out=parse_markdown(text);for(auto& l:out) l.resolved=resolve_markdown(all,source,l.target);return out;
 }
 std::vector<Link> Vault::all_links(const std::string& source,const std::string& text) const {
-    auto all=files();auto out=parse_all(text);
-    for(auto& l:out) l.resolved=l.markdown?resolve_markdown(all,source,l.target):resolve_files(all,source,l.target);
-    return out;
+    Resolution operation(*this);return operation.links(source,text);
 }
-std::vector<std::string> Vault::search(const std::string& query) const {
-    auto q=fold(query); std::vector<std::string> out;
-    for(auto& path:notes()) {
-        auto p=fold(path.substr(0,path.size()-3)); // Match Unicode code points after case folding.
-        const char* wanted=q.c_str();
-        for(const char* c=p.c_str();*c && *wanted;c=g_utf8_next_char(c))
+std::vector<std::string> Vault::search(const std::string& query, std::map<std::string,std::string>* matched_aliases) const {
+    if(matched_aliases) matched_aliases->clear();
+    auto q=fold(query);auto all=files();auto declared=aliases_for_files(*this,all);
+    std::vector<std::pair<std::string,int>> matches;
+    auto rank=[&](const std::string& value,const std::string& matchtext)->int {
+        auto name=fold(value), candidate=fold(matchtext); const char* wanted=q.c_str();
+        for(const char* c=candidate.c_str();*c && *wanted;c=g_utf8_next_char(c))
             if(g_utf8_get_char(c)==g_utf8_get_char(wanted)) wanted=g_utf8_next_char(wanted);
-        if(!*wanted) out.push_back(path);
-    }
-    auto rank=[&](const std::string& path) {
-        auto n=fold(fs::path(path).filename().string()); n.resize(n.size()-3);
-        return n==q ? 0 : n.find(q)==0 ? 1 : n.find(q)!=std::string::npos ? 2 : 3;
+        if(*wanted) return 4;
+        return name==q?0:name.find(q)==0?1:name.find(q)!=std::string::npos?2:3;
     };
-    std::sort(out.begin(),out.end(),[&](auto& a,auto& b){return std::make_tuple(rank(a),depth(a),a)<std::make_tuple(rank(b),depth(b),b);});
-    if(out.size()>50) out.resize(50);
-    return out;
+    for(auto& path:all) if(is_note(path)) {
+        auto full=path.substr(0,path.size()-3);
+        int best=rank(fs::path(full).filename().string(),full);
+        std::string matched;
+        for(auto& alias:declared) if(alias.second==path) {
+            int r=rank(alias.first,alias.first);
+            if(r<best) {best=r;matched=alias.first;}
+        }
+        if(matched_aliases&&!matched.empty()) (*matched_aliases)[path]=matched;
+        if(best<4) matches.emplace_back(path,best);
+    }
+    std::sort(matches.begin(),matches.end(),[&](auto& a,auto& b){return std::make_tuple(a.second,depth(a.first),a.first)<std::make_tuple(b.second,depth(b.first),b.first);});
+    std::vector<std::string> out;for(auto& item:matches){if(out.size()==50)break;out.push_back(item.first);}return out;
 }
 // Directory descriptors prevent following vault-internal symlinks during writes.
 struct FD {
@@ -388,6 +426,30 @@ void Document::load(const Vault& vault,const std::string& relative) {
     if(fstat(file.n,&after)!=0 || !same(before,after)) fail("note changed while loading");
     if(!g_utf8_validate(bytes.data(),bytes.size(),nullptr)) fail("note is not UTF-8 text");
     missing=false; stamp=after; original=bytes; text=bytes; path=relative;
+}
+// Namespace membership was established once by files(). Reuse that list, but
+// still open every directory and file without following symlinks, and retain
+// Document::load's regular-file, stable-read and UTF-8 checks.
+static AliasDeclarations aliases_for_files(const Vault& vault,const std::vector<std::string>& files) {
+    AliasDeclarations out;
+    for(const auto& path:files) if(is_note(path)) try {
+        FD dir(parent_fd(vault,path));
+        FD file(openat(dir.n,fs::path(path).filename().c_str(),O_RDONLY|O_NOFOLLOW|O_CLOEXEC));
+        struct stat before{},after{};
+        if(fstat(file.n,&before)!=0||!S_ISREG(before.st_mode)) continue;
+        auto text=read_fd(file.n);
+        if(fstat(file.n,&after)!=0||!same(before,after)||!g_utf8_validate(text.data(),text.size(),nullptr)) continue;
+        std::set<std::string> seen;
+        for(const auto& prop:properties(text)) if((prop.key=="alias"||prop.key=="aliases")&&!prop.unsupported) {
+            const auto values=prop.list?prop.values:std::vector<std::string>{prop.scalar};
+            for(const auto& alias:values) if(!alias.empty()&&seen.insert(fold(alias)).second)
+                out.emplace_back(alias,path);
+        }
+    } catch(const std::exception&) {} // Same ignored-note behavior as aliases().
+    return out;
+}
+std::vector<std::pair<std::string,std::string>> aliases(const Vault& vault) {
+    return aliases_for_files(vault,vault.files());
 }
 bool Document::changed(const Vault& vault) const {
     struct stat current{};
@@ -550,6 +612,11 @@ static std::vector<TagOccurrence> tag_occurrences(const std::string& text) {
 static std::vector<std::string> note_tags(const std::string& text) {
     std::vector<std::string> out;for(auto& t:tag_occurrences(text)) out.push_back(t.tag);return out;
 }
+std::vector<std::string> scalar_property_tags(const std::string& text,const Property& property) {
+    auto end=text.find('\n',property.start);
+    auto line=text.substr(property.start,end==std::string::npos?end:end-property.start);
+    return note_tags("---\n"+line+"\n---\n");
+}
 std::vector<Tag> Vault::tags() const {
     std::map<std::string,Tag> all;std::set<std::string> explicit_tags;
     for(auto& path:notes()) if(auto text=utf8_note(*this,path)) {
@@ -627,7 +694,8 @@ std::vector<Match> Vault::find(const std::string& query,bool regex,bool word) co
 std::vector<Backlink> Vault::mentions(const std::string& note) const {
     require_note(note);std::vector<Backlink> out;
     if(!utf8_note(*this,note)) return out;
-    auto q=lower_points(fs::path(note).stem().string());
+    std::vector<std::u32string> queries{lower_points(fs::path(note).stem().string())};
+    for(auto& a:aliases(*this)) if(a.second==note) {auto q=lower_points(a.first);if(!q.empty()&&std::find(queries.begin(),queries.end(),q)==queries.end())queries.push_back(q);}
     for(auto& path:notes()) if(path!=note) if(auto text=utf8_note(*this,path)) {
         auto mask=prose(*text);
         // Closed frontmatter uses the same line grammar as tag extraction.
@@ -646,14 +714,18 @@ std::vector<Backlink> Vault::mentions(const std::string& note) const {
         int number=0;
         for(size_t start=0;start<=text->size();) {
             auto end=text->find('\n',start);if(end==std::string::npos) end=text->size();
-            auto line=line_at(start,end);auto points=lower_points(line);++number;size_t at=0;
-            while((at=points.find(q,at))!=std::u32string::npos) {
-                auto a=start+(g_utf8_offset_to_pointer(line.data(),at)-line.data());
-                auto b=start+(g_utf8_offset_to_pointer(line.data(),at+q.size())-line.data());
-                if(whole_word(points,at,at+q.size())&&std::all_of(mask.begin()+a,mask.begin()+b,[](bool b){return b;})) {
-                    out.push_back({path,"",line,number,int(at+1)});at+=q.size();
-                } else ++at;
+            auto line=line_at(start,end);auto points=lower_points(line);++number;
+            std::map<size_t,Backlink> found;
+            for(auto& q:queries) {size_t at=0;
+                while((at=points.find(q,at))!=std::u32string::npos) {
+                    auto a=start+(g_utf8_offset_to_pointer(line.data(),at)-line.data());
+                    auto b=start+(g_utf8_offset_to_pointer(line.data(),at+q.size())-line.data());
+                    if(whole_word(points,at,at+q.size())&&std::all_of(mask.begin()+a,mask.begin()+b,[](bool b){return b;})) {
+                        found.emplace(at,Backlink{path,"",line,number,int(at+1)});at+=q.size();
+                    } else ++at;
+                }
             }
+            for(auto& m:found) out.push_back(m.second);
             if(end==text->size()) break;
             start=end+1;
         }
@@ -663,8 +735,9 @@ std::vector<Backlink> Vault::mentions(const std::string& note) const {
 std::vector<Backlink> Vault::backlinks(const std::string& note) const {
     require_note(note);std::vector<Backlink> out;
     if(!utf8_note(*this,note)) return out;
-    for(auto& source:notes()) if(source!=note) if(auto text=utf8_note(*this,source)) {
-        for(auto& l:all_links(source,*text)) if(l.resolved==Maybe(note)) {
+    Resolution operation(*this);
+    for(auto& source:operation.files) if(is_note(source)&&source!=note) if(auto text=utf8_note(*this,source)) {
+        for(auto& l:operation.links(source,*text)) if(l.resolved==Maybe(note)) {
             auto byte=g_utf8_offset_to_pointer(text->data(),l.offset)-text->data();
             auto start=text->rfind('\n',byte);start=start==std::string::npos?0:start+1;
             auto end=text->find('\n',byte);if(end==std::string::npos) end=text->size();
@@ -805,20 +878,43 @@ Rename Vault::rename(const std::string& old,std::string target) const {
         if(fs::exists(st)&&((current==root/dest&&dest!=old)||(current!=root/dest&&!fs::is_directory(st)))) fail("rename path already exists");
     }
     auto after=before;for(auto& path:after) path=moved(path);std::sort(after.begin(),after.end());
+    auto declared=aliases_for_files(*this,before);
+    auto resolve_wiki=[&](const std::vector<std::string>& files,const std::string& source,const std::string& target,bool prospective) -> Maybe {
+        auto found=resolve_files(files,source,target);
+        if(found||target.empty()||target.find('/')!=std::string::npos) return found;
+        Maybe match;
+        for(const auto& a:declared) if(fold(a.first)==fold(target)) {
+            auto path=prospective?moved(a.second):a.second;
+            if(match&&*match!=path) return {};
+            match=path;
+        }
+        return match;
+    };
+    auto relocation_links=[](const std::string& text) {
+        auto out=parse_all(text);
+        for(const auto& p:properties(text)) if((p.key=="superseded_by"||p.key=="supersedes")&&!p.unsupported) {
+            auto part=text.substr(p.start,p.end-p.start);
+            auto offset=int(g_utf8_strlen(text.data(),p.start));
+            for(auto link:parse(part)) {link.offset+=offset;out.push_back(link);}
+        }
+        std::stable_sort(out.begin(),out.end(),[](const Link& a,const Link& b){return a.offset<b.offset;});
+        out.erase(std::unique(out.begin(),out.end(),[](const Link& a,const Link& b){return a.offset==b.offset&&a.raw==b.raw;}),out.end());
+        return out;
+    };
     std::vector<Change> changes;Rename result{old,dest,{},{},{}};
     for(auto& path:notes()) if(auto text=utf8_note(*this,path)) {
         auto source=moved(path);auto rewritten=*text;
-        auto links=parse_all(*text);
+        auto links=relocation_links(*text);
         for(auto it=links.rbegin();it!=links.rend();++it) {
-            auto& l=*it;auto resolved=l.markdown?resolve_markdown(before,path,l.target):resolve_files(before,path,l.target);if(!resolved) continue;
+            auto& l=*it;auto resolved=l.markdown?resolve_markdown(before,path,l.target):resolve_wiki(before,path,l.target,false);if(!resolved) continue;
             auto intended=moved(*resolved);
-            if((l.markdown?resolve_markdown(after,source,l.target):resolve_files(after,source,l.target))==Maybe(intended)) continue;
+            if((l.markdown?resolve_markdown(after,source,l.target):resolve_wiki(after,source,l.target,true))==Maybe(intended)) continue;
             auto full=is_note(intended)?intended.substr(0,intended.size()-3):intended;
             auto name=fs::path(full).filename().string();
             auto canonical=[&](const std::string& t) -> Maybe {
                 auto raw=std::string(l.embed?"![[":"[[")+t+(l.heading?"#"+*l.heading:"")+(l.alias?"|"+*l.alias:"")+"]]";
                 auto check=parse(raw);
-                if(check.size()==1&&check[0].raw==raw&&check[0].heading==l.heading&&check[0].alias==l.alias&&resolve_files(after,source,check[0].target)==Maybe(intended)) return raw;
+                if(check.size()==1&&check[0].raw==raw&&check[0].heading==l.heading&&check[0].alias==l.alias&&resolve_wiki(after,source,check[0].target,true)==Maybe(intended)) return raw;
                 return {};
             };
             Maybe raw;
@@ -840,17 +936,31 @@ Rename Vault::rename(const std::string& old,std::string target) const {
             } else {raw=canonical(name);if(!raw) raw=canonical(full);}
             if(!raw) fail("link cannot preserve its destination");
             auto begin=g_utf8_offset_to_pointer(text->data(),l.offset)-text->data();
+            // Frontmatter references retain all punctuation and whitespace around
+            // the target; only the target itself needs replacement.
+            if(!l.markdown) for(const auto& prop:properties(*text)) {
+                if((prop.key!="superseded_by"&&prop.key!="supersedes")||prop.unsupported||size_t(begin)<prop.start||size_t(begin)>=prop.end) continue;
+                auto start=l.embed?3u:2u;auto end=l.raw.find_first_of("#|]",start);
+                if(end==std::string::npos) break;
+                auto first=l.raw.find_first_not_of(" \t",start);auto last=l.raw.find_last_not_of(" \t",end-1);
+                if(first==std::string::npos||first>=end||last<first) break;
+                auto replacement=parts(raw->substr(l.embed?3:2,raw->size()-(l.embed?5:4))).target;
+                auto preserved=l.raw;preserved.replace(first,last-first+1,replacement);
+                auto check=parse(preserved);
+                if(check.size()==1&&resolve_wiki(after,source,check[0].target,true)==Maybe(intended)) raw=preserved;
+                break;
+            }
             rewritten.replace(begin,l.raw.size(),*raw);
             result.note_rewrites[path].push_back({l.offset,l.offset+l.length,int(g_utf8_strlen(raw->data(),raw->size()))});
         }
         // A new destination containing Markdown punctuation can change the prose
         // mask around it. Verify the final document before staging any writes.
-        auto final_links=parse_all(rewritten);
+        auto final_links=relocation_links(rewritten);
         if(final_links.size()!=links.size()) fail("link cannot preserve its destination in document");
         for(size_t i=0;i<links.size();++i) {
             const auto& l=links[i];const auto& next=final_links[i];
-            auto was=l.markdown?resolve_markdown(before,path,l.target):resolve_files(before,path,l.target);
-            auto now=next.markdown?resolve_markdown(after,source,next.target):resolve_files(after,source,next.target);
+            auto was=l.markdown?resolve_markdown(before,path,l.target):resolve_wiki(before,path,l.target,false);
+            auto now=next.markdown?resolve_markdown(after,source,next.target):resolve_wiki(after,source,next.target,true);
             if(l.markdown!=next.markdown || (was ? now!=Maybe(moved(*was)) : next.raw!=l.raw))
                 fail("link cannot preserve its destination in document");
         }

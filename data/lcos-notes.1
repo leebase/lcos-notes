@@ -1,9 +1,10 @@
-.TH LCOS-NOTES 1 "November 2026" "LCOS Notes 0.9.0" "User Commands"
+.TH LCOS-NOTES 1 "November 2026" "LCOS Notes 1.0.0" "User Commands"
 .SH NAME
 lcos-notes \- edit and read a local Markdown vault
 .SH SYNOPSIS
 .B lcos-notes
 .RB [ --vault " DIR" " [NOTE]" ]
+.RB [ --capture ]
 .SH DESCRIPTION
 LCOS Notes is an offline GTK editor for a folder of UTF-8 Markdown notes.
 NOTE is a vault-relative path ending in .md. Hidden entries and symlinks are skipped.
@@ -12,6 +13,9 @@ Without arguments, the last vault opens or a folder chooser appears.
 .TP
 .B --vault DIR
 Open DIR as the vault, optionally opening NOTE.
+.TP
+.B --capture
+Open the quick capture window for today's note or Inbox.
 .SH KEYS
 Ctrl+S saves; Ctrl+O opens the quick switcher; Alt+Enter follows a wikilink or Markdown note link.
 Ctrl+click follows an editor link. Ctrl+E toggles a read-only styled reading view
@@ -46,9 +50,13 @@ Reading view shows ==text== on a yellow background. Edit > Highlight (Ctrl+Shift
 wraps or unwraps the editor selection in ==, or inserts an empty pair, as one Undo step.
 View > Highlights (Ctrl+Shift+Y) lists the note's highlights; Enter or a double-click
 jumps to one in reading view.
+Highlights can span bold, italic, code and links; code never supplies delimiters,
+and source line breaks and block boundaries stop a match.
 A block quote starting [!note], [!tip], [!warning], [!danger], [!question] or [!quote]
 is a tinted callout with a bold title; [!type]- starts folded and a click on the
-title opens or closes it without changing the file.
+title opens or closes it without changing the file. Backgrounds fill the reading
+column, including titles inside nested/mixed lists; a folded callout can leave
+an extra tinted blank row.
 A paragraph that is only ![[Note]], ![[Note#Heading]] or ![[Note#^block]] shows that
 note, section or block indented; ![[image.png]] shows the image. Embeds follow
 changes on disk; loops, missing targets and embeds deeper than three levels show as links.
@@ -63,6 +71,14 @@ Folder and attachment renames preserve resolved destinations in both link
 syntaxes, leaving unresolved links unchanged. Attachments appear after notes
 in the tree and cannot be viewed. Renaming saves first, reloads the open note
 at its final path and preserves its caret and editing or reading mode.
+.SH OUTLINE AND ORGANIZATION
+Ctrl+Shift+O focuses the Outline; Enter opens the selected heading.
+F6 opens Move Note with a vault-relative destination folder. File > Archive Note
+moves a note under Archive, retaining its path. Both save first and refuse
+collisions. File > Supersede With writes reciprocal supersession properties.
+Each document is saved atomically; the two saves are not a transaction.
+Reading view displays properties and links to resolved superseding notes above
+the rendered body.
 .SH LINKS
 Local inline Markdown links such as [plan](Note.md#Plan) resolve relative to the
 source folder, then the vault root. Leading slash means vault root. Missing
@@ -75,11 +91,18 @@ after NFC normalization and case folding; search does not normalize.
 .SH FILES
 Settings are stored in $XDG_CONFIG_HOME/lcos-notes, defaulting to
 ~/.config/lcos-notes. Vault contents are ordinary Markdown files.
+.SH DAILY NOTES AND TEMPLATES
+Ctrl+D opens today; Alt+Left/Right visits existing daily notes. New Note selects
+a template or timestamp name; Ctrl+Shift+I inserts a template. Supported Obsidian
+configuration is read without modifying hidden vault directories.
+.SH OPTIONAL FONTS
+LCOS Notes uses installed system fonts. For Chinese, Japanese and Korean
+coverage, install fonts-noto-cjk. This is optional OS coverage, not a mandatory
+Notes dependency. Close and reopen Notes after adding fonts.
+.SH RELEASE STATUS
+LCOS Notes 1.0.0 includes the accepted U10 and 1.0-polish scope.
+See RELEASE-NOTES.md for acceptance evidence and documented limitations.
 .SH SEE ALSO
 .BR lcos-notes-cli (1)
 .SH AUTHORS
 Copyright 2026 Lee Harrington. Licensed under the Apache License, Version 2.0.
-
-.TP
-.B --capture
-Open the quick capture window for today’s note or Inbox.

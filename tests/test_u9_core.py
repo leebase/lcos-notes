@@ -413,10 +413,10 @@ def test_u9_commands_never_write_settings(tmp_path):
 
 def test_user_docs_cover_u9():
     readme = (ROOT / "README.md").read_text()
-    assert "Version 0.9.0." in readme
-    assert readme.find("sudo apt update\n") < readme.find("sudo apt install ./lcos-notes_0.9.0_amd64.deb")
+    assert "Version 1.0.0." in readme
+    assert readme.find("sudo apt update\n") < readme.find("sudo apt install ./lcos-notes_1.0.0_amd64.deb")
     guide = (ROOT / "DOCUMENTATION.md").read_text()
-    assert "This guide covers version 0.9.0." in guide
+    assert "This guide covers version 1.0.0." in guide
     for term in ("daily-notes.json", "Ctrl+D", "Alt+Left", "dailies", "templates.json", "{{title}}",
                  "{{date:", "Insert Template", "Timestamp Name", "zk-prefixer.json", "--capture", "Inbox",
                  "keyboard", "LCOS_NOTES_NOW", "lcos-notes-cli capture"):

@@ -16,7 +16,11 @@ int main(int argc,char** argv) {
     try {
         if(argc<3) throw std::runtime_error("usage: lcos-notes-cli notes|links|mdlinks|resolve|switch|create|tags|tagged|find|backlinks|mentions|retag|rename|render|blocks|tasks VAULT [arguments]");
         std::string command=argv[1],out; Vault vault(argv[2]);
-        if(command=="daily" && argc<=5) {auto now=clock_now();std::string date="today";bool create=false,date_given=false;for(int i=3;i<argc;++i){std::string a=argv[i];if(a=="--create"&&!create)create=true;else if(!date_given&&a!="--create"){date=a;date_given=true;}else throw std::runtime_error("invalid arguments");}auto d=daily(vault,now,date,create);out="{\"path\":"+quote(d.path)+",\"date\":"+quote(d.date)+",\"exists\":"+(d.exists?"true":"false")+",\"created\":"+(d.created?"true":"false")+"}";}
+        if(command=="props" && argc==4) { Document d;d.load(vault,argv[3]);out="{";for(auto& p:properties(d.text)){if(out.size()>1)out+=",";out+=quote(p.key)+":"+(p.list?array(p.values):quote(p.scalar));}out+="}"; }
+        else if(command=="headings" && argc==4) { Document d;d.load(vault,argv[3]);out="[";for(auto& h:headings(d.text)){if(out.size()>1)out+=",";out+="{\"level\":"+std::to_string(h.level)+",\"text\":"+quote(h.text)+",\"line\":"+std::to_string(h.line)+"}";}out+="]"; }
+        else if(command=="aliases" && argc==3) {out="[";for(auto& a:aliases(vault)){if(out.size()>1)out+=",";out+="{\"alias\":"+quote(a.first)+",\"path\":"+quote(a.second)+"}";}out+="]";}
+        else if(command=="supersede" && argc==5) {supersede(vault,argv[3],argv[4]);out="{\"old\":"+quote(argv[3])+",\"new\":"+quote(argv[4])+"}";}
+        else if(command=="daily" && argc<=5) {auto now=clock_now();std::string date="today";bool create=false,date_given=false;for(int i=3;i<argc;++i){std::string a=argv[i];if(a=="--create"&&!create)create=true;else if(!date_given&&a!="--create"){date=a;date_given=true;}else throw std::runtime_error("invalid arguments");}auto d=daily(vault,now,date,create);out="{\"path\":"+quote(d.path)+",\"date\":"+quote(d.date)+",\"exists\":"+(d.exists?"true":"false")+",\"created\":"+(d.created?"true":"false")+"}";}
         else if(command=="dailies" && argc==3){auto ds=dailies(vault,clock_now());out="[";for(auto& d:ds){if(out.size()>1)out+=",";out+="{\"path\":"+quote(d.path)+",\"date\":"+quote(d.date)+"}";}out+="]";}
         else if(command=="unique" && argc==3){out="{\"target\":"+quote(unique_target(vault,clock_now()))+"}";}
         else if(command=="capture" && (argc==4||(argc==5&&std::string(argv[4])=="--inbox"))){auto c=capture(vault,clock_now(),argv[3],argc==5);out="{\"path\":"+quote(c.path)+",\"line\":"+std::to_string(c.line)+",\"created\":"+(c.created?"true":"false")+"}";}
@@ -82,7 +86,7 @@ int main(int argc,char** argv) {
         else if(command=="create" && argc==4) {
             auto result=vault.create(argv[3]); out="{\"path\":"+quote(result.first)+",\"created\":"+(result.second?"true":"false")+"}";
         } else if(command=="resolve" && argc==5) {
-            vault.require_note(argv[3]); auto l=parts(argv[4]); l.resolved=vault.resolve(argv[3],l.target); out="{"+fields(l)+"}";
+            vault.require_note(argv[3]); auto l=parts(argv[4]); bool via=false; l.resolved=vault.resolve(argv[3],l.target,&via); out="{"+fields(l)+(via?",\"via\":\"alias\"":"")+"}";
         } else if(command=="mdlinks" && argc==4) {
             Document doc;doc.load(vault,argv[3]);out="[";
             for(auto& l:vault.mdlinks(doc.path,doc.text)) {

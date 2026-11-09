@@ -1,4 +1,4 @@
-.TH LCOS-NOTES-CLI 1 "November 2026" "LCOS Notes 0.9.0" "User Commands"
+.TH LCOS-NOTES-CLI 1 "November 2026" "LCOS Notes 1.0.0" "User Commands"
 .SH NAME
 lcos-notes-cli \- query and modify a local Markdown vault
 .SH SYNOPSIS
@@ -103,12 +103,11 @@ includes an images array of embedded images, each with its offset in the text an
 .SH UNSUPPORTED
 Markdown links with titles or reference syntax, following images and external
 links, Markdown image embeds, PDF embeds, attachment viewing, NFC search, settings,
-daily notes, graph view, multiple windows, GFM autolinks and footnotes, package publishing
+graph view, multiple windows, GFM autolinks and footnotes, package publishing
 and signing are outside the supported scope.
 .SH SEE ALSO
 .BR lcos-notes (1)
-.SH AUTHORS
-Copyright 2026 Lee Harrington. Licensed under the Apache License, Version 2.0.
+
 
 .SH DAILY NOTES, TEMPLATES AND CAPTURE
 .B daily VAULT [DATE] [--create]
@@ -125,3 +124,20 @@ creates from a template.
 returns a timestamp target.
 .B capture VAULT TEXT [--inbox]
 appends a quick capture.
+.SH ORGANIZATION
+.B props VAULT NOTE
+lists supported frontmatter properties.
+.B aliases VAULT
+lists aliases.
+.B headings VAULT NOTE
+lists Markdown headings.
+.B supersede VAULT OLD NEW
+writes reciprocal supersession properties. Each note is saved atomically.
+
+.SH LIMITS
+There is no separate move or archive CLI command; use rename for path relocation
+or the desktop File menu. Supersede saves each document atomically, not both as
+a single transaction. The short CLI usage line is not a complete command list;
+this manual and DOCUMENTATION.md include U9/U10 commands.
+.SH AUTHORS
+Copyright 2026 Lee Harrington. Licensed under the Apache License, Version 2.0.

@@ -7,6 +7,7 @@
 #include <vector>
 #include <sys/stat.h>
 #include <map>
+#include <stdexcept>
 namespace notes {
 namespace fs = std::filesystem;
 using Maybe = std::optional<std::string>;
@@ -48,6 +49,11 @@ struct Rename {
     std::map<std::string,std::vector<Rewrite>> note_rewrites;
     int map_caret(int offset) const;
 };
+struct Property { std::string key, scalar; std::vector<std::string> values; bool list=false, unsupported=false; size_t start=0, end=0; };
+struct Heading { int level; std::string text; int line; };
+std::vector<Property> properties(const std::string&);
+std::vector<std::string> scalar_property_tags(const std::string&, const Property&);
+std::vector<Heading> headings(const std::string&);
 struct Span { int start, end; std::string style; };
 struct RenderLink { int start, end; std::string raw; Maybe resolved; std::string source; };
 struct RenderImage { int offset; std::string path; };
@@ -66,11 +72,11 @@ public:
     std::vector<std::string> directories() const;
     std::vector<std::string> notes() const;
     void require_note(const std::string& path) const;
-    Maybe resolve(const std::string& source, std::string target) const;
+    Maybe resolve(const std::string& source, std::string target, bool* via_alias=nullptr) const;
     std::vector<Link> links(const std::string& source, const std::string& text) const;
     std::vector<Link> mdlinks(const std::string& source, const std::string& text) const;
     std::vector<Link> all_links(const std::string& source, const std::string& text) const;
-    std::vector<std::string> search(const std::string& query) const;
+    std::vector<std::string> search(const std::string& query, std::map<std::string,std::string>* matched_aliases = nullptr) const;
     std::vector<Tag> tags() const;
     std::vector<std::string> tagged(std::string tag) const;
     std::vector<Match> find(const std::string& query, bool regex=false, bool word=false) const;
@@ -81,6 +87,9 @@ public:
     Rename rename(const std::string& old, std::string target) const;
     std::pair<std::string, bool> create(std::string target, bool exact=false, const std::string& contents="") const;
 };
+std::vector<std::pair<std::string,std::string>> aliases(const Vault&);
+struct SupersedePartialSave : std::runtime_error { using std::runtime_error::runtime_error; };
+void supersede(const Vault&, const std::string&, const std::string&);
 class Document {
     struct stat stamp{};
     std::string original;

@@ -34,7 +34,7 @@ HIGHLIGHTS = [
     ("a==b==c", "abc", [(1, 2, "highlight")]),
     ("==x== and ==y==", "x and y", [(0, 1, "highlight"), (6, 7, "highlight")]),
     ("`==no==`", "==no==", [(0, 6, "code")]),                   # literal text is never scanned
-    ("==*em*==", "==em==", [(2, 4, "em")]),                     # an emphasis node ends the run
+    ("==*em*==", "em", [(0, 2, "em"), (0, 2, "highlight")]),                     # D534: formatting no longer ends the run
     ("*==em==*", "em", [(0, 2, "em"), (0, 2, "highlight")]),
     ("==[[A]]==", "A", [(0, 1, "highlight"), (0, 1, "link")]),
     ("==a\nb==", "==a b==", []),                                # a soft break ends the run
