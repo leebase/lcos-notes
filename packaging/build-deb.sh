@@ -57,7 +57,7 @@ arch=$(dpkg --print-architecture)
 size=$(du -sk "$stage/usr" | cut -f1)
 cat > "$stage/DEBIAN/control" <<CONTROL
 Package: lcos-notes
-Version: 1.0.0
+Version: 1.1.0
 Architecture: $arch
 Maintainer: Lee Harrington <lee@leebase.com>
 Section: editors
@@ -71,4 +71,4 @@ CONTROL
 find "$stage" -type d -exec chmod 0755 {} +
 find "$stage" -type f -exec chmod 0644 {} +
 chmod 0755 "$stage/usr/bin/lcos-notes" "$stage/usr/bin/lcos-notes-cli"
-dpkg-deb --root-owner-group --build "$stage" "$out_dir/lcos-notes_1.0.0_${arch}.deb"
+dpkg-deb --root-owner-group --build "$stage" "$out_dir/lcos-notes_1.1.0_${arch}.deb"

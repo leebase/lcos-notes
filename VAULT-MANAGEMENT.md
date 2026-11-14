@@ -1,6 +1,6 @@
 # Vault management — finite implementation and acceptance contract
 
-Unreleased follow-up to 1.0.0; retain version metadata until a separately authorized release. This document appends to CONTRACT.md; existing accepted contracts still govern.
+Released as 1.1.0 on November 13, 2026. Version 1.1.0 supersedes earlier project/package/About version constants; historical release entries and all behavior contracts remain in force. This document appends to CONTRACT.md; existing accepted contracts still govern.
 
 From an already running normal Notes window the File menu exposes **Open Vault…**, **Recent Vaults…**, and **New Vault…**. The current vault's absolute path is discoverable in the window (status, title, or a visible vault label), including when a note is open. Ctrl+O remains the note Quick Switcher. A successful switch may reconfigure the current window or replace it with one normal Notes window within the same process; no terminal, application restart, or manually closing a previous vault is required.
 

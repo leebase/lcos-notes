@@ -11,10 +11,11 @@ A save uses a temporary file and rename. Keep independent copies of your vault, 
 LCOS Notes reads only selected Obsidian settings and does not write `.obsidian` or add hidden application metadata. It does create or change ordinary files when you request note creation, capture or organization. See [Coming from Obsidian](obsidian-users.md).
 
 
-## Switch vaults from the running app (unreleased source)
+## Switch vaults from the running app
 
-The current source includes these controls; the November 8 version 1.0.0 download
-does not. Use the File menu:
+These controls were added in **LCOS Notes 1.1.0**. If you still have an older
+version, follow [Upgrade from an earlier version](installation.md#upgrade-from-an-earlier-version).
+Then use the File menu:
 
 - **Open Vault…** selects an existing readable folder.
 - **Recent Vaults…** lists up to ten recently opened vaults, most recent first.

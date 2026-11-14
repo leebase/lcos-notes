@@ -1,4 +1,4 @@
-project('lcos-notes', 'cpp', version: '1.0.0', meson_version: '>=0.56', license: 'Apache-2.0', default_options: ['cpp_std=c++17', 'warning_level=2'])
+project('lcos-notes', 'cpp', version: '1.1.0', meson_version: '>=0.56', license: 'Apache-2.0', default_options: ['cpp_std=c++17', 'warning_level=2'])
 gtkmm = dependency('gtkmm-3.0', version: '>=3.24')
 sourceview = dependency('gtksourceviewmm-3.0', version: '>=3.18')
 glib = dependency('glib-2.0')

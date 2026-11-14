@@ -1,15 +1,22 @@
 # LCOS Notes acceptance and release notes
 
-## Unreleased — vault management
+## 1.1.0 — November 13, 2026
 
-The current source adds File > Open Vault…, Recent Vaults… and New Vault…,
-plus a visible absolute vault path. Switch between independent vaults in the
-running Notes window, or create a new empty folder. Switching saves first and
-retains the current vault and edits if saving fails. Ctrl+O remains the note
-Quick Switcher. See [Work with vaults](docs/handbook/vaults.md) for steps and limits.
+Switch vaults without restarting LCOS Notes:
 
-This is a source update. The November 8 version 1.0.0 download is unchanged;
-no new package, release tag or version bump accompanies this integration.
+- **File > Open Vault…** opens an existing vault.
+- **Recent Vaults…** lists up to ten recently opened vaults.
+- **New Vault…** creates and opens a new empty folder.
+- The active vault's full path is visible above the workspace.
+
+Switching saves first; a failed save keeps your current vault and edits open.
+Vaults remain independent, and Ctrl+O remains the note Quick Switcher.
+See [Work with vaults](docs/handbook/vaults.md) for steps and limits.
+
+[Download 1.1.0 and its checksums](https://github.com/leebase/lcos-notes/releases/tag/v1.1.0).
+For an existing installation, [upgrade the package in place](README.md#upgrade-from-an-earlier-version);
+no vault conversion is needed. The README and handbook include the commands and
+how to verify the installed version. Earlier releases remain available below.
 
 ## 1.0.0 — November 8, 2026
 

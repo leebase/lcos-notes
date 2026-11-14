@@ -1,10 +1,12 @@
 # LCOS Notes user guide
 
-This guide covers version 1.0.0. It includes the accepted U10 organization
-and four agreed polish improvements. Download the LCOS package and checksums from
-the [1.0.0 release](https://github.com/leebase/lcos-notes/releases/tag/v1.0.0).
+This guide covers version 1.1.0. It adds in-app vault switching and creation
+to the accepted organization, capture and reading features. Download the LCOS package and checksums from
+the [1.1.0 release](https://github.com/leebase/lcos-notes/releases/tag/v1.1.0).
 
 For a guided introduction and task-based help, read the [LCOS Notes handbook](https://nginx.leebasehome.com/lcos-notes/) or its [Markdown source](docs/handbook/index.md).
+
+For an existing installation, follow [Upgrade from an earlier version](README.md#upgrade-from-an-earlier-version): close Notes, verify the 1.1.0 package checksum, install the new `.deb` over the old package and reopen Notes. Vaults need no conversion.
 
 ## First session
 
@@ -67,10 +69,9 @@ The last opened vault is stored under `$XDG_CONFIG_HOME/lcos-notes/last-vault`
 The app reads supported Obsidian daily-note/template/timestamp settings without
 writing those hidden files. Use an independent backup for your Markdown vault.
 
-## Switching and creating vaults (unreleased source)
+## Switching and creating vaults
 
-These controls are in the current source, after the November 8 version 1.0.0
-package. Choose **File > Open Vault…** to select an existing readable folder,
+Version 1.1.0 adds these controls. Choose **File > Open Vault…** to select an existing readable folder,
 **Recent Vaults…** to return to a recent folder, or **New Vault…** to create and
 open an empty folder. The full current vault path appears above the workspace.
 

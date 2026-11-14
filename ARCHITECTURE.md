@@ -1,8 +1,9 @@
 # LCOS Notes architecture
 
-This describes LCOS Notes 1.0.0, built from the accepted U10 and 1.0-polish
-implementation. Release changes are version metadata and documentation; the
-accepted rendering, vault and capture behavior is retained.
+This describes LCOS Notes 1.1.0, built from the accepted U10 and 1.0-polish
+implementation. Vault management switches the current window between independent roots, resetting
+per-vault editor/navigation state and monitors after a successful save. Capture
+remains separate. Earlier rendering and organization behavior is retained.
 
 ## Components
 
@@ -76,11 +77,14 @@ glyph box alone does not demonstrate a text-offset or Markdown parsing defect.
 
 ## Verification and limits
 
-Engineering acceptance is 838 passing tests, including native GUI regression
-cases. The final Devuan-built package passed 59 installed LCOS regression/polish
-checks and qualified independent engineering review. Five desktop product checks
-passed; the final CJK check used the unchanged binary after a per-user font install.
-These are evidence for this candidate, not universal input/platform guarantees.
+The vault-management implementation passed 838 existing regression tests and
+16 vault GUI tests, with qualified independent engineering review.
+Historical version 1.0.0 package evidence includes 59 installed LCOS regression/
+polish checks and five desktop product checks; its final CJK check used the
+unchanged binary after a per-user font install. Those installed checks describe
+1.0.0. Version 1.1.0 package build and upgrade verification is recorded separately
+in its release evidence. These checks are evidence for specific inputs and
+platforms, with no universal input/platform guarantee.
 
 Retained limits: folded callouts can show an extra tinted blank row; extreme
 unmatched-highlight input can be slow; mouse-only Screen Sharing operation remains

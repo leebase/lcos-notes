@@ -1,6 +1,6 @@
 # Keyboard shortcuts
 
-These shortcuts apply to LCOS Notes 1.0. Menus also show the main actions.
+These shortcuts apply to LCOS Notes 1.1.0. Menus also show the main actions.
 
 | Keys | Action |
 |---|---|
@@ -30,6 +30,6 @@ These shortcuts apply to LCOS Notes 1.0. Menus also show the main actions.
 
 In Search, **Alt+R** toggles regex and **Alt+W** whole word. In New Note, **Alt+T** focuses the template choice and **Alt+N** fills Timestamp Name. In the capture window, **Alt+T** chooses today, **Alt+I** chooses Inbox, and **Ctrl+Enter** submits. Arrows navigate switcher and tree rows. See [Finding](finding.md), [Capture](capture.md), and [Troubleshooting](troubleshooting.md) before using reload on a dirty note.
 
-In the unreleased source, use the File menu for Open Vault…, New Vault… and
-Recent Vaults…. These controls are not in the November 8 version 1.0.0 download.
+In version 1.1.0, use the File menu for Open Vault…, New Vault… and
+Recent Vaults…. [Upgrade](installation.md#upgrade-from-an-earlier-version) if these items are missing.
 Ctrl+O selects notes within the current vault. See [Work with vaults](vaults.md).

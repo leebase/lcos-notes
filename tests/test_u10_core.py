@@ -111,9 +111,9 @@ def test_u10_user_docs_and_metadata():
     root = Path(__file__).resolve().parents[1]
     readme = (root/'README.md').read_text()
     guide = (root/'DOCUMENTATION.md').read_text()
-    assert 'Version 1.0.0.' in readme
+    assert 'Version 1.1.0.' in readme
     assert 'Folder Chief' in readme and 'brain/' in readme and '.sqlite-mem/' in readme
-    assert 'This guide covers version 1.0.0.' in guide
+    assert 'This guide covers version 1.1.0.' in guide
     man = (root/'man/lcos-notes-cli.1').read_text() if (root/'man/lcos-notes-cli.1').exists() else (root/'data/lcos-notes-cli.1').read_text()
     for word in ('aliases', 'headings', 'props', 'supersede'):
         assert word in guide and word in man

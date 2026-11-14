@@ -1,4 +1,4 @@
-.TH LCOS-NOTES 1 "November 2026" "LCOS Notes 1.0.0" "User Commands"
+.TH LCOS-NOTES 1 "November 2026" "LCOS Notes 1.1.0" "User Commands"
 .SH NAME
 lcos-notes \- edit and read a local Markdown vault
 .SH SYNOPSIS
@@ -16,8 +16,8 @@ Open DIR as the vault, optionally opening NOTE.
 .TP
 .B --capture
 Open the quick capture window for today's note or Inbox.
-.SH VAULTS (UNRELEASED SOURCE)
-These controls are in the current source, after the November 8 version 1.0.0 package.
+.SH VAULTS
+Version 1.1.0 adds switching and creating vaults from the running Notes window.
 File > Open Vault selects an existing readable folder. Recent Vaults lists up to
 ten canonical, deduplicated paths, most recent first. A missing or unreadable
 entry may remain listed; opening it reports an error and keeps the current vault.
@@ -119,7 +119,7 @@ LCOS Notes uses installed system fonts. For Chinese, Japanese and Korean
 coverage, install fonts-noto-cjk. This is optional OS coverage, not a mandatory
 Notes dependency. Close and reopen Notes after adding fonts.
 .SH RELEASE STATUS
-LCOS Notes 1.0.0 includes the accepted U10 and 1.0-polish scope.
+LCOS Notes 1.1.0 adds vault management to the accepted U10 and 1.0-polish scope.
 See RELEASE-NOTES.md for acceptance evidence and documented limitations.
 .SH SEE ALSO
 .BR lcos-notes-cli (1)

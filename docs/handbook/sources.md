@@ -1,6 +1,6 @@
 # Sources and version
 
-This handbook describes LCOS Notes 1.0.0. Product behavior is grounded in the [complete user guide](full-reference.md), the 1.0.0 release notes, the accepted contract and application source. The [LCOS Notes 1.0.0 release](https://github.com/leebase/lcos-notes/releases/tag/v1.0.0) provides the package and checksums.
+This handbook describes LCOS Notes 1.1.0. Product behavior is grounded in the [complete user guide](full-reference.md), the 1.1.0 release notes, the accepted contract and application source. The [LCOS Notes 1.1.0 release](https://github.com/leebase/lcos-notes/releases/tag/v1.1.0) provides the package and checksums.
 
 The following official Obsidian Help pages informed topic coverage; this handbook describes LCOS behavior in original text, and the two applications differ:
 

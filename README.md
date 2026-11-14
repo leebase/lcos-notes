@@ -10,22 +10,30 @@ callouts, and embedded notes and images. It has a classic menubar, a notes tree 
 the window manager's own title bar. There are no accounts, no network access, no
 telemetry and no AI features.
 
-**LCOS Notes — November 8, 2026.** Version 1.0.0. U10 organization and the agreed
-1.0 polish are accepted. See the [1.0.0 release](https://github.com/leebase/lcos-notes/releases/tag/v1.0.0) for the LCOS package and checksums.
-Apache License 2.0. [Acceptance and release notes](RELEASE-NOTES.md).
+**LCOS Notes 1.1.0 — November 13, 2026.** Version 1.1.0.
+Switch projects without restarting: **File > Open Vault…**, **Recent Vaults…**
+and **New Vault…** are now available, with the active vault path visible above
+the workspace. Switching saves first; a failed save keeps your current vault
+and edits open. Vaults remain independent. **Ctrl+O** still selects notes.
+
+[Download 1.1.0](https://github.com/leebase/lcos-notes/releases/tag/v1.1.0) ·
+[Upgrade from an earlier version](#upgrade-from-an-earlier-version) ·
+[Work with vaults](docs/handbook/vaults.md) · [Release notes](RELEASE-NOTES.md).
+Apache License 2.0.
 
 ## Download and install (LCOS 1.0)
 
 Download the `.deb` and checksums from the
-[1.0.0 release](https://github.com/leebase/lcos-notes/releases/tag/v1.0.0):
+[1.1.0 release](https://github.com/leebase/lcos-notes/releases/tag/v1.1.0):
 
 ```sh
 sudo apt update
-sudo apt install ./lcos-notes_1.0.0_amd64.deb
+sudo apt install ./lcos-notes_1.1.0_amd64.deb
 ```
 
-Version 1.0.0 includes U10 and the four agreed polish improvements. Earlier
-[0.9.0 downloads](https://github.com/leebase/lcos-notes/releases/tag/v0.9.0) remain available.
+Version 1.1.0 adds vault management to the existing organization, capture and
+reading features. Earlier
+[1.0.0 downloads](https://github.com/leebase/lcos-notes/releases/tag/v1.0.0) remain available.
 
 Run `sudo apt update` first on a fresh LCOS install: it ships without package lists,
 and `apt` needs them to fetch the cmark-gfm libraries LCOS Notes uses (`libcmark-gfm0.29.0.gfm.13` and
@@ -42,16 +50,39 @@ lcos-notes --vault ~/Notes      # opens a specific vault
 The package is built on Devuan Excalibur, the base of LCOS 1.0, and installs
 there. On other Debian-family systems, build your own package from source (below).
 
+## Upgrade from an earlier version
+
+1. Save your notes and close LCOS Notes. Keep your usual independent vault backup.
+2. Download `lcos-notes_1.1.0_amd64.deb` and `SHA256SUMS` from the
+   [1.1.0 release](https://github.com/leebase/lcos-notes/releases/tag/v1.1.0).
+3. In that download folder, run:
+
+```sh
+sha256sum -c SHA256SUMS
+sudo apt update
+sudo apt install ./lcos-notes_1.1.0_amd64.deb
+```
+
+The checksum must report `OK` for the package. Installing the newer package
+upgrades the existing installation in place; you do not need to uninstall it.
+Your vault folders and existing user configuration stay in place; no vault
+conversion or import is required. Reopen Notes, check **Help > About** for
+**1.1.0**, then use the new File-menu vault controls.
+
+There is no LCOS Notes apt repository: `apt upgrade` alone does not download this
+release. Install the downloaded `.deb` as above. The [handbook](docs/handbook/installation.md)
+includes the same upgrade steps. Older downloads remain in the release history.
+
 ## Using it
 
 Start with the [LCOS Notes handbook](https://nginx.leebasehome.com/lcos-notes/) for a three-note tutorial, task guides and searchable reference. The [handbook source](docs/handbook/index.md) is also available here.
 
 Start with the [user guide](DOCUMENTATION.md) for daily use and the
 [architecture guide](ARCHITECTURE.md) for the implementation and data boundaries.
-[Release notes](RELEASE-NOTES.md) describe 1.0.0 and its
+[Release notes](RELEASE-NOTES.md) describe 1.1.0 and its
 [documented limitations](RELEASE-NOTES.md#documented-limitations).
 
-Version 1.0.0 includes daily notes, templates, timestamp names and quick
+LCOS Notes also includes daily notes, templates, timestamp names and quick
 capture; aliases, Properties, Outline, Move, Archive and Supersede; full-width
 callouts, including nested and mixed-list cases; and highlights across inline
 formatting while preserving links. New Note labels align left. The U9 implementation
@@ -78,14 +109,13 @@ The keys you will use most:
 | Ctrl+Shift+B | Jump to backlinks |
 | F2 | Rename the current note or selected note, folder, attachment or tag |
 
-## Vault management (unreleased source)
+## Vault management
 
-The current source adds **File > Open Vault…**, **Recent Vaults…** and
-**New Vault…**, with the full active vault path visible above the workspace.
-Switching saves the current note first; a failed save keeps your vault and edits
-open. **Ctrl+O** still selects notes in the active vault. See
-[Work with vaults](docs/handbook/vaults.md) for creation, recent paths and limits.
-These controls are not included in the November 8 version 1.0.0 download.
+From the running app, use **File > Open Vault…** for an existing readable folder,
+**Recent Vaults…** to return to a recent project, or **New Vault…** to create an
+empty folder. The full active path appears above the workspace. No terminal or
+restart is needed. Search and links stay within the selected vault.
+See [Work with vaults](docs/handbook/vaults.md) for creation requirements and limits.
 
 ## Building from source
 
@@ -107,7 +137,7 @@ To install system-wide, use `meson setup build --prefix=/usr`, then
 To build a `.deb` for the machine you are on (no root needed; `dpkg-dev` required):
 
 ```sh
-packaging/build-deb.sh ~/out      # writes ~/out/lcos-notes_1.0.0_<arch>.deb
+packaging/build-deb.sh ~/out      # writes ~/out/lcos-notes_1.1.0_<arch>.deb
 ```
 
 ## Tests

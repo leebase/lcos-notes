@@ -1,6 +1,12 @@
 # LCOS Notes handbook
 
-LCOS Notes 1.0 is an offline Markdown notebook for LCOS and other X11 desktops. Your vault is a folder of ordinary files; notes are UTF-8 `.md` files. Start with a separate practice folder and invented examples.
+LCOS Notes 1.1.0 is an offline Markdown notebook for LCOS and other X11 desktops. Your vault is a folder of ordinary files; notes are UTF-8 `.md` files. Start with a separate practice folder and invented examples.
+
+**New in 1.1.0:** switch between independent projects with File > Open Vault…,
+return through Recent Vaults…, or create an empty folder with New Vault….
+The active vault path is visible above the workspace. See [Work with vaults](vaults.md).
+Already using Notes? [Upgrade to 1.1.0](installation.md#upgrade-from-an-earlier-version)
+to get these controls.
 
 - [Install and open](installation.md) takes you from the package to a vault.
 - [Your first three notes](quick-start.md) is a ten-minute exercise.
