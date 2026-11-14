@@ -67,6 +67,32 @@ The last opened vault is stored under `$XDG_CONFIG_HOME/lcos-notes/last-vault`
 The app reads supported Obsidian daily-note/template/timestamp settings without
 writing those hidden files. Use an independent backup for your Markdown vault.
 
+## Switching and creating vaults (unreleased source)
+
+These controls are in the current source, after the November 8 version 1.0.0
+package. Choose **File > Open Vault…** to select an existing readable folder,
+**Recent Vaults…** to return to a recent folder, or **New Vault…** to create and
+open an empty folder. The full current vault path appears above the workspace.
+
+New Vault takes the complete absolute path, including the new folder name, such
+as `/home/alex/Notes/Project B`. Its parent must already exist and be writable;
+the new folder must not exist, even as a symbolic link. Omit a trailing slash
+and use an absolute path rather than `~`. No notes or hidden metadata are seeded.
+
+Switching saves the current note first. If saving fails, the current vault and
+unsaved edits remain open; check the status bar for the cause. Cancellation,
+invalid destinations and selecting the current vault leave the editor unchanged.
+Recent Vaults keeps up to ten canonical, deduplicated paths in
+`$XDG_CONFIG_HOME/lcos-notes/recent-vaults`, outside the vault. Missing or
+unreadable recent entries may remain listed; trying to open one reports an error
+and keeps your current vault. Configuration write failures show a warning.
+
+Switching uses one Notes window. Search and links stay within the selected vault;
+vaults are not merged and cross-vault links are unsupported. Use ordinary local
+UTF-8 paths, including spaces and non-ASCII names; control-character paths and
+network filesystems are outside the supported scope. **Ctrl+O** remains the note
+Quick Switcher. See [Work with vaults](docs/handbook/vaults.md).
+
 ## Starting
 
 ```sh

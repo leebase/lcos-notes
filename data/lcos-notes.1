@@ -16,6 +16,25 @@ Open DIR as the vault, optionally opening NOTE.
 .TP
 .B --capture
 Open the quick capture window for today's note or Inbox.
+.SH VAULTS (UNRELEASED SOURCE)
+These controls are in the current source, after the November 8 version 1.0.0 package.
+File > Open Vault selects an existing readable folder. Recent Vaults lists up to
+ten canonical, deduplicated paths, most recent first. A missing or unreadable
+entry may remain listed; opening it reports an error and keeps the current vault.
+New Vault creates and opens an empty folder. Enter its complete absolute path,
+including the new name, without a trailing slash or tilde abbreviation. The parent
+must exist and be writable; the target must not already exist, even as a symlink.
+No starter notes or hidden metadata are created.
+The full active path appears above the workspace. Switching saves first;
+a failed save keeps the current vault and edits open. Check the status bar for
+the cause. Cancellation, invalid destinations and selecting the current vault
+leave the editor unchanged. Recent paths and the last vault are stored in the
+user configuration directory outside the vault; write failures show a warning.
+Switching uses one Notes window. Search and links stay within the selected vault;
+merged search and cross-vault links are unsupported. Ordinary local UTF-8 paths,
+including spaces and non-ASCII names, are supported. Control-character paths and
+network filesystems are outside the supported scope.
+Ctrl+O selects notes within the current vault.
 .SH KEYS
 Ctrl+S saves; Ctrl+O opens the quick switcher; Alt+Enter follows a wikilink or Markdown note link.
 Ctrl+click follows an editor link. Ctrl+E toggles a read-only styled reading view

@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = {
+    "vaults": ["tests/test_vault_management_gui.py"],
     "selftest": ["tests/test_selftest.py"],
     "core": ["tests/test_core.py"],
     "gui": ["tests/test_gui.py"],

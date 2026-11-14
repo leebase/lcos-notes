@@ -78,6 +78,15 @@ The keys you will use most:
 | Ctrl+Shift+B | Jump to backlinks |
 | F2 | Rename the current note or selected note, folder, attachment or tag |
 
+## Vault management (unreleased source)
+
+The current source adds **File > Open Vault…**, **Recent Vaults…** and
+**New Vault…**, with the full active vault path visible above the workspace.
+Switching saves the current note first; a failed save keeps your vault and edits
+open. **Ctrl+O** still selects notes in the active vault. See
+[Work with vaults](docs/handbook/vaults.md) for creation, recent paths and limits.
+These controls are not included in the November 8 version 1.0.0 download.
+
 ## Building from source
 
 You need a C++17 compiler, Meson (0.56 or later), Ninja, pkg-config and the

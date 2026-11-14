@@ -10,7 +10,71 @@
 #include <sys/inotify.h>
 #include <unistd.h>
 #include <array>
+#include <algorithm>
+#include <cerrno>
+#include <cstring>
 using namespace notes;
+static fs::path config_dir() { return fs::path(Glib::get_user_config_dir())/"lcos-notes"; }
+static std::vector<std::string> recent_vaults() {
+    std::vector<std::string> result;
+    auto add=[&](const std::string& path) {
+        if(path.empty() || !fs::path(path).is_absolute()) return;
+        // Keep stale entries usable for later rejection, but collapse aliases of
+        // existing directories before deduplication and applying the limit.
+        std::error_code error;
+        auto canonical=fs::canonical(path,error);
+        auto normalized=!error && fs::is_directory(canonical,error) && !error
+            ? canonical.string() : path;
+        if(std::find(result.begin(),result.end(),normalized)==result.end() && result.size()<10)
+            result.push_back(normalized);
+    };
+    std::ifstream history(config_dir()/"recent-vaults");
+    std::string line; while(std::getline(history,line)) add(line);
+    std::ifstream last(config_dir()/"last-vault"); std::getline(last,line); add(line);
+    return result;
+}
+static void write_config_file(const fs::path& path,const std::string& contents) {
+    GError* error=nullptr;
+    if(!g_file_set_contents(path.c_str(),contents.c_str(),contents.size(),&error)) {
+        std::string why=error?error->message:"unknown error";
+        if(error) g_error_free(error);
+        throw std::runtime_error(why);
+    }
+}
+static void remember_vault(const fs::path& root) {
+    auto paths=recent_vaults(); auto path=root.string();
+    paths.erase(std::remove(paths.begin(),paths.end(),path),paths.end());
+    paths.insert(paths.begin(),path); if(paths.size()>10) paths.resize(10);
+    std::string history; for(const auto& item:paths) history+=item+"\n";
+    fs::create_directories(config_dir());
+    auto history_path=config_dir()/"recent-vaults";
+    bool had_history=fs::exists(history_path);
+    std::string previous;
+    if(had_history) {
+        std::ifstream input(history_path,std::ios::binary);
+        if(!input) throw std::runtime_error("Cannot read existing vault history");
+        previous.assign(std::istreambuf_iterator<char>(input),std::istreambuf_iterator<char>());
+        if(input.bad()) throw std::runtime_error("Cannot read existing vault history");
+    }
+    write_config_file(history_path,history);
+    try { write_config_file(config_dir()/"last-vault",path+"\n"); }
+    catch(...) {
+        try {
+            if(had_history) write_config_file(history_path,previous);
+            else fs::remove(history_path);
+        } catch(...) { /* Preserve the original failure; rollback may also fail. */ }
+        throw;
+    }
+}
+static fs::path prepare_vault(const fs::path& path) {
+    auto root=fs::canonical(path);
+    struct stat st{};
+    if(stat(root.c_str(),&st)!=0 || !S_ISDIR(st.st_mode)) throw std::runtime_error("Not a directory");
+    if(!(st.st_mode&0444) || !(st.st_mode&0111) || access(root.c_str(),R_OK|X_OK)!=0)
+        throw std::runtime_error("Vault is not readable or traversable");
+    Vault candidate(root); candidate.files(); candidate.directories();
+    return root;
+}
 class Window : public Gtk::Window {
     Vault vault;
     Document document;
@@ -62,6 +126,7 @@ class Window : public Gtk::Window {
     Gsv::View editor;
     Glib::RefPtr<Gsv::Buffer> buffer=Gsv::Buffer::create();
     Gtk::Statusbar status;
+    Gtk::Label vault_label;
     struct Columns : Gtk::TreeModel::ColumnRecord {
         Gtk::TreeModelColumn<Glib::ustring> label,path,text;
         Gtk::TreeModelColumn<int> line,col;
@@ -193,6 +258,102 @@ class Window : public Gtk::Window {
     std::string value() {return buffer->get_text().raw();}
     bool dirty() {return !document.path.empty() && (document.deleted()||value()!=document.text);}
     void message(const std::string& s) {status.pop();status.push(s);}
+    void vault_error(const std::string& text) {
+        Gtk::MessageDialog dialog(*this,text,false,Gtk::MESSAGE_ERROR,Gtk::BUTTONS_OK,true);
+        dialog.run();
+    }
+    void remember() {
+        try { remember_vault(vault.root); }
+        catch(const std::exception& e) { vault_error(std::string("Could not save vault history: ")+e.what()); }
+    }
+    void install_vault(const fs::path& root) {
+        notify_connection.disconnect(); external_pending.disconnect(); styling.disconnect(); reading_scrolling.disconnect();
+        if(notify_fd>=0) ::close(notify_fd);
+        notify_fd=-1; watches.clear(); disk_state.clear();
+        document=Document{}; vault=Vault(root);
+        loading=true; buffer->begin_not_undoable_action(); buffer->set_text("");
+        buffer->end_not_undoable_action(); buffer->set_modified(false); loading=false;
+        reading_images.clear(); reading_buffer->set_text(""); rendered=Render{}; fold_closed.clear();
+        for(auto child:properties_box.get_children()) properties_box.remove(*child);
+        tag_store->clear(); store->clear(); outline_store->clear(); backlink_store->clear(); mention_store->clear();
+        if(reading) toggle_reading();
+        editor.set_sensitive(false); sidebar.set_current_page(0);
+        vault_label.set_text(vault.root.string());
+        refresh_tree(); refresh_u2(); update_title(); position(); start_monitoring(); remember();
+    }
+    void open_vault(const fs::path& path) {
+        try {
+            auto root=prepare_vault(path);
+            if(root==vault.root) return;
+            if(!save()) { vault_error("Could not switch vault: the current note was not saved."); return; }
+            install_vault(root);
+        } catch(const std::exception& e) { vault_error(std::string("Cannot open vault: ")+e.what()); }
+    }
+    void choose_vault() {
+        Gtk::FileChooserDialog dialog(*this,"Open Vault",Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER);
+        dialog.add_button("_Cancel",Gtk::RESPONSE_CANCEL); dialog.add_button("_Open",Gtk::RESPONSE_OK);
+        dialog.set_current_folder(vault.root.string());
+        std::string typed_path;
+        bool composing_unicode=false;
+        dialog.signal_key_press_event().connect([&](GdkEventKey* event) {
+            if((event->state&GDK_CONTROL_MASK) && (event->state&GDK_SHIFT_MASK) &&
+               (event->keyval==GDK_KEY_u || event->keyval==GDK_KEY_U)) {
+                composing_unicode=true;
+                return false;
+            }
+            if(event->keyval==GDK_KEY_Escape) composing_unicode=false;
+            if(event->keyval!=GDK_KEY_Return && event->keyval!=GDK_KEY_KP_Enter) return false;
+            if(composing_unicode) { composing_unicode=false; return false; }
+            auto focus=gtk_window_get_focus(GTK_WINDOW(dialog.gobj()));
+            if(!focus || !GTK_IS_ENTRY(focus)) return false;
+            Glib::ustring text=gtk_entry_get_text(GTK_ENTRY(focus));
+            int first=0,last=0;
+            if(gtk_editable_get_selection_bounds(GTK_EDITABLE(focus),&first,&last) && last==int(text.size()))
+                text=text.substr(0,first);
+            if(text.empty() || text[0]!='/') return false;
+            typed_path=text.raw();
+            dialog.response(1001);
+            return true;
+        },false);
+        auto response=dialog.run();
+        if(response==1001) open_vault(typed_path);
+        else if(response==Gtk::RESPONSE_OK) open_vault(dialog.get_filename());
+    }
+    void new_vault() {
+        Gtk::Dialog dialog("New Vault",*this,true);
+        Gtk::Entry entry; entry.set_activates_default(true);
+        dialog.get_content_area()->pack_start(entry); dialog.add_button("_Cancel",Gtk::RESPONSE_CANCEL);
+        dialog.add_button("_Create",Gtk::RESPONSE_OK); dialog.set_default_response(Gtk::RESPONSE_OK);
+        dialog.show_all_children(); entry.grab_focus();
+        if(dialog.run()!=Gtk::RESPONSE_OK) return;
+        fs::path path(entry.get_text().raw());
+        try {
+            if(path.empty() || !path.is_absolute() || path==path.root_path() || path.filename().empty())
+                throw std::runtime_error("Path must be an absolute new folder path");
+            struct stat st{};
+            if(lstat(path.c_str(),&st)==0 || errno!=ENOENT) throw std::runtime_error("Destination already exists or cannot be inspected");
+            auto parent=fs::canonical(path.parent_path());
+            if(stat(parent.c_str(),&st)!=0 || !S_ISDIR(st.st_mode) || !(st.st_mode&0222) || !(st.st_mode&0111) || access(parent.c_str(),W_OK|X_OK)!=0)
+                throw std::runtime_error("Parent is not writable or traversable");
+            if(!save()) { vault_error("Could not create vault: the current note was not saved."); return; }
+            auto target=parent/path.filename();
+            if(!fs::create_directory(target)) throw std::runtime_error("Destination already exists");
+            try { install_vault(prepare_vault(target)); }
+            catch(const std::exception& e) { throw std::runtime_error(std::string("Created empty folder but could not open it: ")+e.what()); }
+        } catch(const std::exception& e) { vault_error(std::string("Cannot create vault: ")+e.what()); }
+    }
+    void recent_dialog() {
+        Gtk::Dialog dialog("Recent Vaults",*this,true);
+        Gtk::ScrolledWindow scroll; Gtk::TreeView list;
+        auto model=Gtk::ListStore::create(columns); list.set_model(model); list.append_column("Vault",columns.label);
+        for(const auto& path:recent_vaults()) { auto row=model->append(); (*row)[columns.label]=path; }
+        scroll.add(list); scroll.set_min_content_width(500); scroll.set_min_content_height(200);
+        dialog.get_content_area()->pack_start(scroll); dialog.add_button("_Cancel",Gtk::RESPONSE_CANCEL);
+        dialog.add_button("_Open",Gtk::RESPONSE_OK); dialog.set_default_response(Gtk::RESPONSE_OK);
+        list.signal_row_activated().connect([&](const Gtk::TreeModel::Path&,Gtk::TreeViewColumn*){dialog.response(Gtk::RESPONSE_OK);});
+        dialog.show_all_children(); if(!model->children().empty()) list.set_cursor(Gtk::TreeModel::Path("0")); list.grab_focus();
+        if(dialog.run()==Gtk::RESPONSE_OK) { auto row=list.get_selection()->get_selected(); if(row) open_vault(Glib::ustring((*row)[columns.label]).raw()); }
+    }
     void update_title() {
         auto name=document.path.empty()?vault.root.filename().string():fs::path(document.path).filename().string();
         if(!document.path.empty()) name.resize(name.size()-3);
@@ -995,7 +1156,7 @@ public:
             },100);
             return false;
         });
-        menu("_File",{{"New Note… (Ctrl+N)",[this]{new_note();}},{"Quick Switcher (Ctrl+O)",[this]{switcher();}},{"Save (Ctrl+S)",[this]{if(!reading) save();}},{"Reload from Disk (Ctrl+Shift+R)",[this]{reload_disk();}},{"_Rename… (F2)",[this]{rename_dialog();}},{"Move Note… (F6)",[this]{relocate_note(false);}},{"_Archive Note",[this]{relocate_note(true);}},{"S_upersede With…",[this]{supersede_dialog();}},{"_Quit",[this]{close();}}});
+        menu("_File",{{"_Open Vault…",[this]{choose_vault();}},{"_New Vault…",[this]{new_vault();}},{"Recent _Vaults…",[this]{recent_dialog();}},{"New Note… (Ctrl+N)",[this]{new_note();}},{"Quick Switcher (Ctrl+O)",[this]{switcher();}},{"Save (Ctrl+S)",[this]{if(!reading) save();}},{"Reload from Disk (Ctrl+Shift+R)",[this]{reload_disk();}},{"_Rename… (F2)",[this]{rename_dialog();}},{"Move Note… (F6)",[this]{relocate_note(false);}},{"_Archive Note",[this]{relocate_note(true);}},{"S_upersede With…",[this]{supersede_dialog();}},{"_Quit",[this]{close();}}});
         menu("_Edit",{{"Insert Template… (Ctrl+Shift+I)",[this]{insert_template();}},{"Highlight (Ctrl+Shift+H)",[this]{edit_highlight();}},{"_Undo",[this]{if(!reading&&buffer->can_undo()) buffer->undo();}},{"_Redo",[this]{if(!reading&&buffer->can_redo()) buffer->redo();}},{"Cu_t",[this]{if(!reading) buffer->cut_clipboard(Gtk::Clipboard::get());}},{"_Copy",[this]{if(reading) reading_buffer->copy_clipboard(Gtk::Clipboard::get());else buffer->copy_clipboard(Gtk::Clipboard::get());}},{"_Paste",[this]{if(!reading) buffer->paste_clipboard(Gtk::Clipboard::get());}}});
         menu("_View",{{"Highlights… (Ctrl+Shift+Y)",[this]{highlights_dialog();}},{"Focus _Editor",[this]{focus_content();}}});
         auto view_item=dynamic_cast<Gtk::MenuItem*>(menubar.get_children().back());
@@ -1008,7 +1169,7 @@ public:
             {"Notes (Ctrl+Shift+E)",[this]{focus_sidebar(false);}},{"Tags (Ctrl+Shift+T)",[this]{focus_sidebar(true);}},
             {"Unlinked Mentions (Ctrl+Shift+M)",[this]{focus_backlinks(true);}},{"Today's Note (Ctrl+D)",[this]{today_note();}},{"Previous Daily Note (Alt+Left)",[this]{adjacent_daily(false);}},{"Next Daily Note (Alt+Right)",[this]{adjacent_daily(true);}}});
         menu("_Help",{{"_About",[this]{Gtk::AboutDialog dialog;dialog.set_transient_for(*this);dialog.set_program_name("LCOS Notes");dialog.set_version("1.0.0");dialog.set_copyright("Copyright 2026 Lee Harrington");dialog.set_license_type(Gtk::LICENSE_CUSTOM);dialog.set_wrap_license(true);dialog.set_license("Licensed under the Apache License, Version 2.0 (the \"License\"); you may not use this program except in compliance with the License. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.");dialog.set_comments("Offline Markdown notes for LCOS and X11 desktops. Apache-2.0.");dialog.run();}}});
-        layout.pack_start(menubar,Gtk::PACK_SHRINK);layout.pack_start(panes);layout.pack_end(status,Gtk::PACK_SHRINK);
+        layout.pack_start(menubar,Gtk::PACK_SHRINK);vault_label.set_text(vault.root.string()); vault_label.set_xalign(0); layout.pack_start(vault_label,Gtk::PACK_SHRINK);layout.pack_start(panes);layout.pack_end(status,Gtk::PACK_SHRINK);
         tree.set_model(store);tree.append_column("Notes",columns.label);tree.set_headers_visible(false);
         tree_scroll.add(tree);tree_scroll.set_policy(Gtk::POLICY_AUTOMATIC,Gtk::POLICY_AUTOMATIC);
         sidebar.append_page(tree_scroll,"Notes");sidebar.append_page(tags_scroll,"Tags");
@@ -1112,8 +1273,7 @@ public:
         refresh_tree();refresh_u2();show_all_children();views.set_visible_child("editor");update_title();position();
         if(!note.empty()) {editor.set_sensitive(true);open_note(note);}
         start_monitoring();
-        auto config=fs::path(Glib::get_user_config_dir())/"lcos-notes";
-        fs::create_directories(config);std::ofstream(config/"last-vault")<<vault.root.string()<<'\n';
+        remember();
     }
 };
 int main(int argc,char** argv) {
@@ -1145,6 +1305,6 @@ int main(int argc,char** argv) {
             Gtk::Window window;window.set_title("Capture — Notes");window.set_default_size(480,300);Gtk::Box box(Gtk::ORIENTATION_VERTICAL,8);Gtk::ScrolledWindow scroll;Gtk::TextView view;scroll.add(view);box.pack_start(scroll);Gtk::RadioButton today("_Today's note",true), inbox("_Inbox",true);inbox.join_group(today);box.pack_start(today,Gtk::PACK_SHRINK);box.pack_start(inbox,Gtk::PACK_SHRINK);std::ifstream choice(choice_path);std::string saved;std::getline(choice,saved);if(saved=="inbox")inbox.set_active();Gtk::Label error;box.pack_start(error,Gtk::PACK_SHRINK);Gtk::ButtonBox buttons;Gtk::Button cancel("_Cancel",true),submit("_Capture",true);buttons.pack_start(cancel);buttons.pack_start(submit);box.pack_start(buttons,Gtk::PACK_SHRINK);window.add(box);
             auto perform=[&]{try{auto text=view.get_buffer()->get_text().raw();capture(v,clock_now(false),text,inbox.get_active());fs::create_directories(choice_path.parent_path());std::ofstream(choice_path)<<(inbox.get_active()?"inbox":"today");window.hide();}catch(const std::exception& e){if(std::string(e.what())!="nothing to capture")error.set_text(std::string("refused: ")+e.what());}};submit.signal_clicked().connect(perform);cancel.signal_clicked().connect([&]{window.hide();});window.signal_key_press_event().connect([&](GdkEventKey* e){if(e->keyval==GDK_KEY_Escape){window.hide();return true;}if((e->state&GDK_MOD1_MASK)&&(e->keyval==GDK_KEY_i||e->keyval==GDK_KEY_I||e->keyval==GDK_KEY_t||e->keyval==GDK_KEY_T)){if(e->keyval==GDK_KEY_i||e->keyval==GDK_KEY_I)inbox.set_active();else today.set_active();view.grab_focus();return true;}if((e->state&GDK_CONTROL_MASK)&&(e->keyval==GDK_KEY_Return||e->keyval==GDK_KEY_KP_Enter)){perform();return true;}return false;},false);window.show_all();view.grab_focus();return app->run(window);
         }
-        Window window(root,note);return app->run(window);
+        Window window(prepare_vault(root),note);return app->run(window);
     } catch(const std::exception& e) {std::cerr<<"refused: "<<e.what()<<'\n';return 2;}
 }

@@ -29,3 +29,7 @@ These shortcuts apply to LCOS Notes 1.0. Menus also show the main actions.
 | Escape | Cancel or close a dialog |
 
 In Search, **Alt+R** toggles regex and **Alt+W** whole word. In New Note, **Alt+T** focuses the template choice and **Alt+N** fills Timestamp Name. In the capture window, **Alt+T** chooses today, **Alt+I** chooses Inbox, and **Ctrl+Enter** submits. Arrows navigate switcher and tree rows. See [Finding](finding.md), [Capture](capture.md), and [Troubleshooting](troubleshooting.md) before using reload on a dirty note.
+
+In the unreleased source, use the File menu for Open Vault…, New Vault… and
+Recent Vaults…. These controls are not in the November 8 version 1.0.0 download.
+Ctrl+O selects notes within the current vault. See [Work with vaults](vaults.md).

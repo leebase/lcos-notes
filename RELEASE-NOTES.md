@@ -1,5 +1,16 @@
 # LCOS Notes acceptance and release notes
 
+## Unreleased — vault management
+
+The current source adds File > Open Vault…, Recent Vaults… and New Vault…,
+plus a visible absolute vault path. Switch between independent vaults in the
+running Notes window, or create a new empty folder. Switching saves first and
+retains the current vault and edits if saving fails. Ctrl+O remains the note
+Quick Switcher. See [Work with vaults](docs/handbook/vaults.md) for steps and limits.
+
+This is a source update. The November 8 version 1.0.0 download is unchanged;
+no new package, release tag or version bump accompanies this integration.
+
 ## 1.0.0 — November 8, 2026
 
 Lee accepted U10 organization and the four agreed 1.0-polish improvements.
